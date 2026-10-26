@@ -13,7 +13,7 @@ Raspberry Pi 5, without editing YAML by hand. Reach it from your phone over Tail
 
 ![dashboard](docs/screenshots/dashboard.png)
 
-## What it does (v0.3.2)
+## What it does (v0.3.3)
 
 | Area | Status |
 |---|---|
@@ -43,6 +43,11 @@ Then open `http://<pi-tailscale-name>:8080` and follow **Setup**:
 1. **Install DVM** – builds dvmhost/dvmfne (≈15–30 min on a Pi 5; safe to re-run to update). Build commands run
    with `LC_ALL=C.UTF-8` (`cmake -S src -B src/build`, `make`), and their output is decoded with invalid bytes replaced,
    so odd bytes from git/cmake (e.g. while FetchContent clones WebSocket++) can't crash the job (fixed in 0.3.2).
+   Source: `/opt/src/dvmhost` (`MALILINK_SRC_DIR`); build dir `/opt/src/dvmhost/build` is **deleted before every
+   configure** (a clone of WebSocket++ interrupted by an app restart leaves a corrupt `build/_deps`), and a failed
+   configure wipes it and retries once. A broken/half-cloned checkout is re-cloned; tick **clean source checkout**
+   to run `git clean -fdx` first. If the app is restarted mid-install, the job shows as *failed / interrupted* —
+   just run it again. Manual fallback: `sudo rm -rf /opt/src/dvmhost/build` (or the whole `/opt/src/dvmhost`).
 2. Pick **P25 → Conventional**, enter name/callsign, frequencies, NAC, modem port, network, talkgroups.
 3. **Review & save** – see every generated file, tick the two licence/terms boxes, save, start.
 4. **Program radio** – values to type into your radio's CPS.

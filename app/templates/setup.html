@@ -61,8 +61,10 @@
       <span id="instBadge" class="pill gray">checking…</span>
       <button class="btn primary" id="instBtn" type="button">Install / update DVM</button>
       <label class="check" style="margin:0"><input type="checkbox" id="instFne" checked> also install the dvmfne service</label>
+      <label class="check" style="margin:0" title="git clean -fdx: deletes every untracked/ignored file in the dvmhost source folder before building"><input type="checkbox" id="instClean"> clean source checkout (<span class="mono">git clean -fdx</span>) — use if a build keeps failing</label>
     </div>
     <ul class="progress" id="instSteps"></ul>
+    <div class="hint" id="instPaths"></div>
     <div class="log mono" id="instLog"><span class="muted">Install output will stream here.</span></div>
     <p class="hint">Already installed it by hand? Just press <b>Next</b>.</p>
   </section>

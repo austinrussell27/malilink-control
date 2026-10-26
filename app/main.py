@@ -282,11 +282,11 @@ def api_install_status(since: int = 0):
 
 
 @app.post("/api/install/start")
-def api_install_start(with_fne: bool = True):
+def api_install_start(with_fne: bool = True, clean_src: bool = False):
     if not install_job.dry_run and not settings.is_root:
         raise HTTPException(403, "Installing DVM needs root (apt, make install, useradd, systemd units). "
                                  "Run Malinois Link Control as root: sudo ./scripts/install-app.sh, or start it with sudo.")
-    if not install_job.start(with_fne):
+    if not install_job.start(with_fne, clean_src):
         raise HTTPException(409, "Install already running")
     return {"ok": True, "dry_run": install_job.dry_run}
 

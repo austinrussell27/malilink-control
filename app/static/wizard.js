@@ -128,6 +128,7 @@
     s.lines.forEach(l => $("#instLog").insertAdjacentHTML("beforeend", `<div class="${l.startsWith("==>") ? "I" : /error|fail/i.test(l) ? "E" : ""}">${esc(l)}</div>`));
     if (s.lines.length) $("#instLog").scrollTop = 1e9;
     $("#instSteps").innerHTML = s.steps.map(x => `<li class="${s.done_steps.includes(x.id) ? "done" : s.step === x.id ? "run" : ""}">${s.done_steps.includes(x.id) ? "✓" : s.step === x.id ? "●" : "○"} ${esc(x.label)}</li>`).join("");
+    if (s.src_dir) $("#instPaths").innerHTML = `Source: <span class="mono">${esc(s.src_dir)}</span> · build dir (wiped before every configure): <span class="mono">${esc(s.build_dir)}</span>`;
     const b = $("#instBadge");
     if (s.state === "running") { b.className = "pill amber"; b.textContent = "installing…"; }
     else if (s.state === "ok") { b.className = "pill green"; b.textContent = s.dry_run ? "install simulated (dry-run)" : "installed"; }
@@ -137,7 +138,7 @@
     if (s.state === "running") setTimeout(poll, 700); else polling = false;
   }
   $("#instBtn").onclick = async () => {
-    try { await api(`/api/install/start?with_fne=${$("#instFne").checked}`, {method: "POST"}); since = 0; if (!polling) { polling = true; poll(); } }
+    try { await api(`/api/install/start?with_fne=${$("#instFne").checked}&clean_src=${$("#instClean").checked}`, {method: "POST"}); since = 0; if (!polling) { polling = true; poll(); } }
     catch (e) { alert(e.message); }
   };
 

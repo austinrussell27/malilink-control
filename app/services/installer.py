@@ -22,6 +22,7 @@ useradd/usermod tolerate existing users, and units are overwritten. Services are
 """
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import subprocess
@@ -45,7 +46,41 @@ STEPS = [
 ]
 
 
-def build_script(with_fne: bool = True) -> str:
+def clone_block(src: str, repo: str) -> str:
+    """Fetch/update the source; a half-finished or broken checkout is removed and cloned fresh."""
+    return f"""if [ -d {src}/.git ] && git -C {src} fetch --depth 1 origin && git -C {src} reset --hard FETCH_HEAD; then
+  echo "source updated"
+else
+  if [ -e {src} ]; then echo "existing checkout at {src} is incomplete or broken - removing it and cloning again"; rm -rf {src}; fi
+  mkdir -p "$(dirname {src})"
+  git clone --depth 1 {repo} {src}
+fi
+"""
+
+
+def configure_block(src: str, clean_src: bool = False, cmake: str = "cmake") -> str:
+    """Always configure from an empty build dir (a FetchContent clone of websocketpp interrupted by an
+    app restart leaves a corrupt build/_deps/websocketpp-src). If configure still fails, wipe the build
+    dir once more and retry once (e.g. a flaky FetchContent download)."""
+    b = f"{src}/build"
+    s = ""
+    if clean_src:
+        s += f'echo "git clean -fdx in {src} (removes every untracked/ignored file, incl. build/)"\n'
+        s += f"git -C {src} clean -fdx\n"
+    s += f"""echo "removing old build directory {b} (clean configure, includes _deps)"
+rm -rf {b}
+if ! {cmake} -S {src} -B {b}; then
+  echo "cmake configure failed - wiping {b} and retrying once"
+  rm -rf {b}
+  {cmake} -S {src} -B {b}
+fi
+"""
+    return s
+
+
+def build_script(with_fne: bool = True, clean_src: bool = False) -> str:
+    if len(settings.src_dir.resolve().parts) < 3:  # we rm -rf <src>/build and maybe <src>: never near /
+        raise ValueError(f"refusing to build in {settings.src_dir}: choose a deeper MALILINK_SRC_DIR")
     src = shlex.quote(str(settings.src_dir))
     repo = shlex.quote(settings.repo_url)
     logd = shlex.quote(str(settings.dvm_log_dir))
@@ -57,17 +92,9 @@ echo "##STEP deps"
 apt-get update
 apt-get install -y git build-essential cmake libasio-dev libncurses-dev libssl-dev libdw-dev elfutils
 echo "##STEP clone"
-if [ -d {src}/.git ]; then
-  git -C {src} fetch --depth 1 origin
-  git -C {src} reset --hard FETCH_HEAD
-else
-  mkdir -p "$(dirname {src})"
-  git clone --depth 1 {repo} {src}
-fi
-git -C {src} log -1 --format='source commit %H (%cd)'
+{clone_block(src, repo)}git -C {src} log -1 --format='source commit %H (%cd)'
 echo "##STEP configure"
-cmake -S {src} -B {src}/build
-cd {src}/build
+{configure_block(src, clean_src)}cd {src}/build
 echo "##STEP build"
 make -j{jobs}
 make strip
@@ -121,6 +148,9 @@ def iter_output(stream) -> Iterator[str]:
         yield text
 
 
+STATE_FILE = settings.data_dir / "install_state.json"
+
+
 class InstallJob:
     def __init__(self) -> None:
         self.lock = threading.Lock()
@@ -132,6 +162,32 @@ class InstallJob:
         self.finished = None
         self.dry_run = settings.dry_run
         self.proc: subprocess.Popen | None = None
+        self.clean_src = False
+        self._recover()
+
+    def _save_state(self) -> None:
+        try:
+            STATE_FILE.write_text(json.dumps({"state": self.state, "step": self.step, "started": self.started,
+                                              "finished": self.finished, "pid": os.getpid()}))
+        except Exception:
+            pass
+
+    def _recover(self) -> None:
+        """App restarted (or was killed) while an install ran: report it as failed, never as running.
+        systemd kills the build with the app (same cgroup); the next run wipes the build dir anyway."""
+        try:
+            prev = json.loads(STATE_FILE.read_text())
+        except Exception:
+            return
+        if prev.get("state") == "running":
+            self.state, self.started, self.finished = "failed", prev.get("started"), time.time()
+            step = dict(STEPS).get(prev.get("step") or "", prev.get("step") or "?")
+            self.lines = [f"Previous install was interrupted during: {step} (the app was restarted or stopped).",
+                          "Run Install / update DVM again - the build directory is wiped before configuring.",
+                          "If the source checkout itself looks broken, tick 'clean source checkout'."]
+            self._save_state()
+        elif prev.get("state") in ("ok", "failed"):
+            self.state, self.started, self.finished = prev["state"], prev.get("started"), prev.get("finished")
 
     def snapshot(self, since: int = 0) -> dict:
         with self.lock:
@@ -139,7 +195,8 @@ class InstallJob:
                     "steps": [{"id": i, "label": l} for i, l in STEPS], "dry_run": self.dry_run,
                     "lines": self.lines[since:], "next": len(self.lines),
                     "started": self.started, "finished": self.finished,
-                    "installed": settings.dvmhost_installed}
+                    "installed": settings.dvmhost_installed,
+                    "src_dir": str(settings.src_dir), "build_dir": str(settings.src_dir / "build")}
 
     def _emit(self, line: str) -> None:
         line = line.rstrip("\n")
@@ -148,6 +205,7 @@ class InstallJob:
                 if self.step:
                     self.done_steps.append(self.step)
                 self.step = line.split(" ", 1)[1]
+                self._save_state()
                 self.lines.append(f"==> {dict(STEPS).get(self.step, self.step)}")
             elif line == "##DONE":
                 if self.step:
@@ -160,12 +218,14 @@ class InstallJob:
         with LOG.open("a", encoding="utf-8", errors="replace") as fh:
             fh.write(line + "\n")
 
-    def start(self, with_fne: bool = True) -> bool:
+    def start(self, with_fne: bool = True, clean_src: bool = False) -> bool:
         with self.lock:
             if self.state == "running":
                 return False
             self.state, self.step, self.done_steps, self.lines = "running", None, [], []
             self.started, self.finished = time.time(), None
+            self.clean_src = clean_src
+            self._save_state()
         LOG.write_text("")
         threading.Thread(target=self._run, args=(with_fne,), daemon=True).start()
         return True
@@ -186,7 +246,7 @@ class InstallJob:
                 if os.geteuid() != 0:
                     self._emit("ERROR: installing needs root. Run Malinois Link Control via its systemd unit (runs as root).")
                 else:
-                    script = build_script(with_fne)
+                    script = build_script(with_fne, self.clean_src)
                     # binary pipe + our own tolerant decoding (see iter_output)
                     self.proc = subprocess.Popen(["bash", "-c", script], stdout=subprocess.PIPE,
                                                  stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
@@ -200,6 +260,7 @@ class InstallJob:
         with self.lock:
             self.state = "ok" if ok else "failed"
             self.finished = time.time()
+            self._save_state()
 
 
 job = InstallJob()
