@@ -2,7 +2,8 @@
 
 Steps verified against the dvmhost repo (commit in dvm_templates/SOURCE.txt):
   * README "Build Instructions": deps `libasio-dev libncurses-dev libssl-dev` (+ optional
-    `libdw-dev` for stack traces), `mkdir build && cd build && cmake .. && make`, `make strip`.
+    `libdw-dev` for stack traces), `mkdir build && cd build && cmake .. && make`, `make strip`
+    (we run the equivalent `cmake -S <src> -B <src>/build`).
     A native build on the Pi needs NO cross-compile flags (-DCROSS_COMPILE_AARCH64 is only for
     cross-compiling from x86).
   * CMakeLists.txt: CMAKE_INSTALL_PREFIX=/usr/local; install() puts dvmhost/dvmfne/dvmcmd...
@@ -27,6 +28,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from typing import Iterator
 
 from ..settings import ROOT_DIR, settings
 
@@ -64,9 +66,8 @@ else
 fi
 git -C {src} log -1 --format='source commit %H (%cd)'
 echo "##STEP configure"
-mkdir -p {src}/build
+cmake -S {src} -B {src}/build
 cd {src}/build
-cmake ..
 echo "##STEP build"
 make -j{jobs}
 make strip
@@ -99,6 +100,25 @@ DRY_OUTPUT = {
     "user": ["(dvmhost user created / already exists)"],
     "units": ["installed dvmhost.service, dvmfne.service", "systemctl daemon-reload"],
 }
+
+
+def subprocess_env() -> dict:
+    """Environment for install subprocesses: UTF-8 C locale, non-interactive apt, no git prompts."""
+    env = dict(os.environ)
+    env.update(LC_ALL="C.UTF-8", LANG="C.UTF-8", DEBIAN_FRONTEND="noninteractive", GIT_TERMINAL_PROMPT="0")
+    return env
+
+
+def iter_output(stream) -> Iterator[str]:
+    """Yield decoded lines from a BINARY stream. Never raises on bad bytes: tools such as git (via
+    cmake FetchContent) can print non-UTF-8 bytes, which used to crash the job with a UnicodeDecodeError.
+    Carriage-return progress updates ("Receiving objects: 45%\r...") keep only the last segment."""
+    for raw in iter(stream.readline, b""):
+        text = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+        if "\r" in text:
+            text = [seg for seg in text.split("\r") if seg.strip()][-1:] or [""]
+            text = text[0]
+        yield text
 
 
 class InstallJob:
@@ -137,7 +157,7 @@ class InstallJob:
                 self.lines.append(line)
                 if len(self.lines) > 5000:
                     del self.lines[:1000]
-        with LOG.open("a") as fh:
+        with LOG.open("a", encoding="utf-8", errors="replace") as fh:
             fh.write(line + "\n")
 
     def start(self, with_fne: bool = True) -> bool:
@@ -167,10 +187,12 @@ class InstallJob:
                     self._emit("ERROR: installing needs root. Run Malinois Link Control via its systemd unit (runs as root).")
                 else:
                     script = build_script(with_fne)
+                    # binary pipe + our own tolerant decoding (see iter_output)
                     self.proc = subprocess.Popen(["bash", "-c", script], stdout=subprocess.PIPE,
-                                                 stderr=subprocess.STDOUT, text=True, bufsize=1)
+                                                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                                 env=subprocess_env())
                     assert self.proc.stdout
-                    for line in self.proc.stdout:
+                    for line in iter_output(self.proc.stdout):
                         self._emit(line)
                     ok = self.proc.wait() == 0
         except Exception as e:  # pragma: no cover

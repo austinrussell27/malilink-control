@@ -20,5 +20,12 @@ cp "$DEST/systemd/malilink-control.service" /etc/systemd/system/
 # MALILINK_DRY_RUN=1          # never touch apt/systemctl/usr/local/etc (default on a Pi: real mode)
 ENV
 systemctl daemon-reload
-systemctl enable --now malilink-control
+systemctl enable malilink-control
+# restart if it was already running so an update (git pull + this script) actually loads the new code
+if systemctl is-active --quiet malilink-control; then
+  echo "Restarting malilink-control to load the updated code..."
+  systemctl restart malilink-control
+else
+  systemctl start malilink-control
+fi
 echo "Malinois Link Control is running on port 8080 — open http://$(hostname):8080 over Tailscale."

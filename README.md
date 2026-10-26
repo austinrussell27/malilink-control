@@ -13,7 +13,7 @@ Raspberry Pi 5, without editing YAML by hand. Reach it from your phone over Tail
 
 ![dashboard](docs/screenshots/dashboard.png)
 
-## What it does (v0.3.1)
+## What it does (v0.3.2)
 
 | Area | Status |
 |---|---|
@@ -36,8 +36,13 @@ git clone <this repo> malilink-control && cd malilink-control
 sudo ./scripts/install-app.sh          # venv + deps + systemd unit "malilink-control" on :8080
 ```
 
+**Update:** `git pull && sudo ./scripts/install-app.sh` — the script restarts `malilink-control` if it is
+already running, so the new code is loaded (a stale process gives errors like "'mode' is undefined").
+
 Then open `http://<pi-tailscale-name>:8080` and follow **Setup**:
-1. **Install DVM** – builds dvmhost/dvmfne (≈15–30 min on a Pi 5; safe to re-run to update).
+1. **Install DVM** – builds dvmhost/dvmfne (≈15–30 min on a Pi 5; safe to re-run to update). Build commands run
+   with `LC_ALL=C.UTF-8` (`cmake -S src -B src/build`, `make`), and their output is decoded with invalid bytes replaced,
+   so odd bytes from git/cmake (e.g. while FetchContent clones WebSocket++) can't crash the job (fixed in 0.3.2).
 2. Pick **P25 → Conventional**, enter name/callsign, frequencies, NAC, modem port, network, talkgroups.
 3. **Review & save** – see every generated file, tick the two licence/terms boxes, save, start.
 4. **Program radio** – values to type into your radio's CPS.

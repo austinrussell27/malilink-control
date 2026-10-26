@@ -5,6 +5,7 @@ calls any dvmhost REST/RPC endpoint that keys the transmitter.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from datetime import datetime
@@ -16,7 +17,9 @@ ALLOWED = {settings.host_unit, settings.fne_unit}
 
 
 def _run(args: list[str], timeout: int = 20) -> tuple[int, str]:
-    p = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    env = {**os.environ, "LC_ALL": "C.UTF-8", "LANG": "C.UTF-8"}
+    p = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       timeout=timeout, env=env, stdin=subprocess.DEVNULL)
     return p.returncode, (p.stdout + p.stderr).strip()
 
 
