@@ -1,6 +1,6 @@
 (() => {
-  let step = 0; const N = 9;
-  const choice = {mode: "p25", topology: "conventional", network_mode: "local_fne"};
+  let step = 0; const N = 10;
+  const choice = {mode: "p25", topology: "conventional", network_mode: "local_fne", purpose: "new"};
   let tgs = [{tgid: 1, name: "Talkgroup 1", alias: "Tactical", parrot: false},
              {tgid: 9990, name: "Parrot", alias: "Parrot/Testing", parrot: true}];
   let preview = null, curFile = null;
@@ -11,8 +11,9 @@
     $$("#steps li").forEach(li => { const i = +li.dataset.step; li.classList.toggle("on", i === step); li.classList.toggle("done", i < step); });
     $("#back").disabled = step === 0;
     $("#next").style.visibility = step === N - 1 ? "hidden" : "visible";
-    if (step === 8) doPreview();
-    if (step === 3) calc();
+    if (step === 9) doPreview();
+    if (step === 4) calc();
+    $("#next").hidden = step === 0 && choice.purpose === "voice";
     window.scrollTo({top: 0, behavior: "smooth"});
   }
   $$("#steps li").forEach(li => li.onclick = () => show(+li.dataset.step));
@@ -21,7 +22,7 @@
 
   function validateStep() {
     $$(".err", $(`.panel[data-step="${step}"]`)).forEach(e => e.remove());
-    const need = {2: ["system_name", "callsign"], 3: ["tx_mhz", "rx_mhz"]}[step] || [];
+    const need = {3: ["system_name", "callsign"], 4: ["tx_mhz", "rx_mhz"]}[step] || [];
     let ok = true;
     for (const id of need) { const el = $("#" + id); if (!el.value.trim()) { ok = false; el.insertAdjacentHTML("afterend", `<div class="err">Required</div>`); } }
     return ok;
@@ -34,7 +35,15 @@
     $$(".choice", g).forEach(x => x.classList.remove("sel")); c.classList.add("sel");
     choice[g.dataset.group] = c.dataset.val;
     if (g.dataset.group === "network_mode") $("#remoteFields").hidden = c.dataset.val !== "remote_fne";
+    if (g.dataset.group === "topology") applyTopology();
+    if (g.dataset.group === "purpose") { $("#joinBox").hidden = c.dataset.val !== "voice"; show(0); }
   }));
+  function applyTopology() {
+    const t = choice.topology === "trunked";
+    $("#ccTag").hidden = !t; $("#trunkNet").hidden = !t;
+    $$('[data-group="network_mode"] .choice').forEach(c => c.classList.toggle("off", t && c.dataset.val !== "local_fne"));
+    if (t) { choice.network_mode = "local_fne"; $$('[data-group="network_mode"] .choice').forEach(c => c.classList.toggle("sel", c.dataset.val === "local_fne")); $("#remoteFields").hidden = true; }
+  }
 
   // talkgroups
   function renderTgs() {
@@ -99,6 +108,7 @@
       const r = await api("/api/wizard/apply", {method: "POST", body: payload()});
       $("#saveMsg").textContent = `Saved ${r.written.length} files${r.dry_run ? " (dry-run)" : ""}.`;
       $("#afterSave").hidden = false; $("#fneStart").hidden = choice.network_mode !== "local_fne";
+      $("#pairLink").hidden = choice.topology !== "trunked";
     } catch (e) { $("#saveMsg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
   };
   $$("[data-svc]").forEach(b => b.onclick = async () => {
@@ -138,9 +148,20 @@
     if (!w || !w.system_name) return;
     for (const [k, v] of Object.entries(w)) { const el = $("#" + k); if (el && el.type !== "checkbox" && v != null) el.value = v; }
     if (w.talkgroups) tgs = w.talkgroups;
-    for (const g of ["network_mode"]) { if (w[g]) { choice[g] = w[g]; $$(`[data-group="${g}"] .choice`).forEach(c => c.classList.toggle("sel", c.dataset.val === w[g])); } }
+    for (const g of ["network_mode", "topology"]) { if (w[g]) { choice[g] = w[g]; $$(`[data-group="${g}"] .choice`).forEach(c => c.classList.toggle("sel", c.dataset.val === w[g])); } }
     $("#remoteFields").hidden = choice.network_mode !== "remote_fne";
-    renderTgs();
+    applyTopology(); renderTgs();
   });
+  $("#joinBtn").onclick = async () => {
+    $("#joinMsg").textContent = "Contacting control Pi…";
+    try {
+      const r = await api("/api/pairing/join", {method: "POST", body: {
+        control_url: $("#j_control").value, code: $("#j_code").value, name: $("#j_name").value,
+        modem_port: $("#j_port").value, requested_tx_mhz: +$("#j_tx").value || null,
+        ack_license: $("#j_ack_license").checked, ack_terms: $("#j_ack_terms").checked}});
+      const s = r.summary;
+      $("#joinMsg").innerHTML = `<span style="color:var(--green)">Joined ${esc(s.system_name)} as channel ${esc(s.channelNo)} (TX ${s.tx_mhz.toFixed(5)} / RX ${s.rx_mhz.toFixed(5)} MHz)${r.dry_run ? " — dry-run" : ""}.</span> <a href="/dashboard">Open dashboard →</a>`;
+    } catch (e) { $("#joinMsg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  };
   renderTgs(); poll(); show(0);
 })();

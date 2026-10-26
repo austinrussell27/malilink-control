@@ -34,7 +34,8 @@ class LiveSource(DataSource):
                 "host": systemd.status(settings.host_unit), "fne": None, "mode": "Offline", "tx": False,
                 "modem": {}, "channelId": None, "channelNo": None, "nac": None, "peerId": None,
                 "lastSrcId": None, "lastDstId": None, "dry_run": settings.dry_run}
-        if (st.get("wizard") or {}).get("network_mode") == "local_fne":
+        w = st.get("wizard") or {}
+        if role != "voice" and (w.get("network_mode") == "local_fne" or w.get("topology") == "trunked"):
             node["fne"] = systemd.status(settings.fne_unit)
         grants, affs = [], []
         if node["host"]["active"] and self._host:

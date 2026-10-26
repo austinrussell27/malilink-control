@@ -2,15 +2,40 @@
 {% block title %}Program your radio · Malinois Link Control{% endblock %}
 {% block content %}
 <h1>Program your radio</h1>
-<p class="sub">Enter these values in your radio's programming software (CPS) as a new P25 conventional channel / personality.</p>
+<p class="sub">Enter these values in your radio's programming software (CPS){% if radio and radio.trunked %} as a P25 trunking system / personality{% else %} as a new P25 conventional channel / personality{% endif %}.</p>
 {% if not radio %}
   <div class="notice">{{ err or "Finish the setup wizard first — then your radio values will appear here." }} <a href="/setup">Go to setup →</a></div>
 {% else %}
 <div class="grid g3">
-  <div class="card radio-card"><h3>Receive frequency</h3><div class="val">{{ "%.5f"|format(radio.radio_rx_mhz) }}</div><div class="muted">MHz — what your radio listens to</div></div>
+  <div class="card radio-card"><h3>{{ "Control channel (radio RX)" if radio.trunked else "Receive frequency" }}</h3><div class="val">{{ "%.5f"|format(radio.radio_rx_mhz) }}</div><div class="muted">MHz — what your radio listens to</div></div>
   <div class="card radio-card"><h3>Transmit frequency</h3><div class="val">{{ "%.5f"|format(radio.radio_tx_mhz) }}</div><div class="muted">MHz — what your radio talks on{% if radio.offset_mhz %} (offset {{ "%+.4f"|format(radio.offset_mhz) }} MHz){% else %} (simplex){% endif %}</div></div>
   <div class="card radio-card"><h3>NAC</h3><div class="val mono">{{ radio.nac_hex }}</div><div class="muted">hex (= {{ radio.nac_dec }} decimal). Set both Rx and Tx NAC.</div></div>
 </div>
+{% if radio.trunked %}
+<div class="grid g2" style="margin-top:16px">
+  <div class="card"><h2>Trunking system</h2>
+    <table class="t">
+      <tr><td class="muted">System type</td><td>P25 Phase 1 trunking (FDMA)</td></tr>
+      <tr><td class="muted">WACN</td><td class="mono">{{ radio.wacn }} <span class="muted">(hex)</span></td></tr>
+      <tr><td class="muted">System ID</td><td class="mono">{{ radio.sys_id }} <span class="muted">(hex)</span></td></tr>
+      <tr><td class="muted">RFSS / Site</td><td class="mono">{{ radio.rfss_id }} / {{ radio.site_id }}</td></tr>
+      <tr><td class="muted">Control channel</td><td class="mono">{{ "%.5f"|format(radio.radio_rx_mhz) }} MHz</td></tr>
+    </table></div>
+  <div class="card"><h2>Band plan (identifier {{ radio.band_plan.iden }})</h2>
+    <p class="muted small">Some radios (e.g. Motorola) need this as a custom band plan / frequency table.</p>
+    <table class="t">
+      <tr><td class="muted">Base frequency</td><td class="mono">{{ "%.5f"|format(radio.band_plan.base_mhz) }} MHz</td></tr>
+      <tr><td class="muted">Channel spacing</td><td class="mono">{{ radio.band_plan.spacing_khz }} kHz</td></tr>
+      <tr><td class="muted">Transmit offset</td><td class="mono">{{ "%+.4f"|format(radio.band_plan.offset_mhz) }} MHz</td></tr>
+      <tr><td class="muted">Bandwidth</td><td class="mono">{{ radio.band_plan.bandwidth_khz }} kHz</td></tr>
+    </table>
+    <h3 style="margin-top:12px">Voice channels</h3>
+    {% if radio.voice_channels %}<table class="t"><tr><th>Pi</th><th>Ch</th><th>Radio RX</th><th>Radio TX</th></tr>
+    {% for v in radio.voice_channels %}<tr><td>{{ v.name }}</td><td>{{ v.channelNo }}</td><td class="mono">{{ "%.5f"|format(v.tx_mhz) }}</td><td class="mono">{{ "%.5f"|format(v.rx_mhz) }}</td></tr>{% endfor %}</table>
+    {% else %}<div class="empty">None paired yet — <a href="/trunking">add one</a>.</div>{% endif %}
+  </div>
+</div>
+{% endif %}
 <div class="grid g2" style="margin-top:16px">
   <div class="card"><h2>Channel settings</h2>
     <table class="t">

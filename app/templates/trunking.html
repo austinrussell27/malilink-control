@@ -1,39 +1,67 @@
 {% extends "base.html" %}
 {% block title %}Trunking · Malinois Link Control{% endblock %}
 {% block content %}
-<h1>Trunking & voice channels <span class="pill gray">coming next</span></h1>
-<p class="sub">Design preview. One Pi runs the <b>control channel</b> (and the network hub); every extra Pi joins as a <b>voice channel</b> with a short pairing code over Tailscale.</p>
+<h1>Trunking & voice channels</h1>
+<p class="sub">One Pi runs the <b>control channel</b> and the network hub; every extra Pi joins as a <b>voice channel</b> with a short pairing code over Tailscale. The control Pi assigns the channel number, writes its voice-channel list and restarts dvmhost.</p>
+{% set role = st.role %}
+{% if role == "control" %}
 <div class="grid g2">
-  <div class="card"><h2>On the control-channel Pi</h2>
-    <ol class="muted small"><li>Click <b>Create pairing code</b>.</li><li>Code is valid for 10 minutes, single use.</li><li>The control Pi assigns the next channel number, adds the Pi to its voice-channel list and to this dashboard.</li></ol>
+  <div class="card"><h2>Add a voice channel</h2>
+    <ol class="muted small"><li>Install Malinois Link Control on the new Pi and open its <b>Setup</b>.</li>
+      <li>Choose <b>Add this Pi as a voice channel</b>.</li><li>Enter this Pi's address and the code below (valid 10 minutes, single use).</li></ol>
     <button class="btn primary" id="mk">Create pairing code</button>
     <div class="big mono" id="code" style="margin-top:12px;font-size:34px;letter-spacing:.1em"></div>
-    <div id="vcs" style="margin-top:12px"></div>
+    <div class="muted small" id="codeHint"></div>
   </div>
-  <div class="card"><h2>On a new Pi: "Add a voice channel"</h2>
-    <div class="field"><label>Control Pi address</label><input id="cu" placeholder="http://mali-cc:8080"><div class="hint">Its Tailscale name or 100.x.y.z address.</div></div>
-    <div class="field"><label>Pairing code</label><input id="pc" class="mono" placeholder="K7Q-4MD" style="text-transform:uppercase"></div>
-    <button class="btn" id="join">Join as voice channel</button>
-    <pre class="small mono muted" id="jout" style="white-space:pre-wrap"></pre>
-  </div>
+  <div class="card"><h2>Channels in this system</h2><div id="chans"></div><pre class="small muted mono" id="rmOut"></pre></div>
 </div>
-<div class="card" style="margin-top:16px"><h2>Pairing API</h2>
-<pre class="file mono">POST /api/pairing/codes            (control)  -> {code, expires}
-POST /api/pairing/claim  {code,name,url,rpc_address,rpc_port}  (control, called by the new Pi)
-                                            -> {channelId, channelNo, site{...}, controlCh{...}, network{...}, cluster_key, todo[]}
-POST /api/pairing/join   {control_url, code}  (new Pi)  -> calls /claim, stores the bundle, role=voice
-GET  /api/pairing/voice-channels    (control)  -> paired voice channels
-GET  /api/local/snapshot | /api/local/logs   (every Pi; header X-Malilink-Cluster-Key) -> dashboard aggregation
+{% elif role == "voice" %}
+<div class="card"><h2>This Pi is a voice channel</h2><div id="joined"></div>
+  <p class="muted small">To leave the system, remove this channel on the control Pi's Trunking page, then run Setup again here.</p></div>
+{% else %}
+<div class="grid g2">
+  <div class="card"><h2>Make this Pi a control channel</h2>
+    <p class="muted">Run <a href="/setup">Setup</a> and choose <b>P25 → Trunked</b>. You'll then create pairing codes here.</p></div>
+  <div class="card"><h2>Join as a voice channel</h2>
+    <p class="muted">Open <a href="/setup">Setup</a> and choose <b>Add this Pi as a voice channel</b> on the welcome screen.</p></div>
+</div>
+{% if settings.demo %}<p class="notice small" style="margin-top:14px">The dashboard's demo data shows what a paired 3-Pi trunked site looks like.</p>{% endif %}
+{% endif %}
+<details class="card" style="margin-top:16px"><summary style="cursor:pointer"><b>Pairing API & generated keys</b></summary>
+<pre class="file mono" style="margin-top:10px">POST   /api/pairing/codes                       (control)  -> {code, expires}
+POST   /api/pairing/claim  {code,name,url,rpc_address?,requested_tx_mhz?}  (control, called by new Pi)
+       -> {channelNo, iden, iden_table, site, talkgroups, rpc{address,port,password}, network{...}, cluster_key}
+POST   /api/pairing/join   {control_url, code, name, modem_*, requested_tx_mhz?, ack_*}  (new Pi)
+GET    /api/pairing/voice-channels             DELETE /api/pairing/voice-channels/{chNo}
+GET    /api/local/snapshot | /api/local/logs   (X-Malilink-Cluster-Key) -> dashboard aggregation
 
-Still TODO (see app/pairing.py): write voiceChNo on the control Pi + restart, write the VC config.yml
-on the new Pi, enable the P25 control channel on the CC.</pre></div>
+Control: protocols.p25.control.enable=true, dedicated=true; system.config.authoritative=true,
+         supervisor=true; network.rpcAddress=0.0.0.0; system.config.voiceChNo=[each VC]
+Voice:   protocols.p25.control.enable=false; authoritative=false, supervisor=false;
+         system.config.controlCh {rpcAddress=CC, rpcPort=9890, rpcPassword, notifyEnable=true};
+         network -> control Pi's dvmfne; one shared rpcPassword for all RPC peers</pre></details>
 {% endblock %}
 {% block scripts %}
 <script>
-async function vcs() { const r = await api("/api/pairing/voice-channels");
-  $("#vcs").innerHTML = r.voice_channels.length ? `<table class="t"><tr><th>Pi</th><th>Channel</th><th>RPC</th></tr>${r.voice_channels.map(v => `<tr><td>${esc(v.name)}</td><td>${esc(v.channelNo)}</td><td>${esc(v.rpc_address)}:${esc(v.rpc_port)}</td></tr>`).join("")}</table>` : '<div class="empty">No voice channels paired yet.</div>'; }
-$("#mk").onclick = async () => { try { const r = await api("/api/pairing/codes", {method: "POST"}); $("#code").textContent = r.code; } catch (e) { $("#code").innerHTML = `<span class="err" style="font-size:14px">${esc(e.message)}</span>`; } };
-$("#join").onclick = async () => { try { const r = await api("/api/pairing/join", {method: "POST", body: {control_url: $("#cu").value, code: $("#pc").value}}); $("#jout").textContent = JSON.stringify(r, null, 2); } catch (e) { $("#jout").textContent = e.message; } };
-vcs();
+async function load() {
+  const r = await api("/api/pairing/voice-channels");
+  if ($("#chans")) $("#chans").innerHTML = `<table class="t"><tr><th>Pi</th><th>Ch</th><th>TX / RX MHz</th><th>RPC</th><th></th></tr>${r.channels.map(c => `<tr>
+      <td>${esc(c.name)} ${c.control ? '<span class="pill blue">CC</span>' : ''}</td><td>${esc(c.channelNo)}</td>
+      <td class="mono small">${c.tx_mhz.toFixed(5)} / ${c.rx_mhz.toFixed(5)}</td><td class="small">${c.control ? "" : esc(c.rpc_address) + ":" + esc(c.rpc_port)}</td>
+      <td>${c.control ? "" : `<button class="btn danger" onclick="rm(${c.channelNo})">Remove</button>`}</td></tr>`).join("")}</table>
+      ${r.voice_channels.length ? "" : '<div class="empty" style="margin-top:8px">No voice channels yet — dvmhost on the control channel needs at least one.</div>'}`;
+  if ($("#joined") && r.joined) { const j = r.joined; $("#joined").innerHTML = `<table class="t">
+      <tr><td class="muted">System</td><td>${esc(j.system_name)}</td></tr><tr><td class="muted">Control Pi</td><td>${esc(j.control_url)} (${esc(j.control_ip)})</td></tr>
+      <tr><td class="muted">Channel</td><td>${esc(j.channelNo)}</td></tr><tr><td class="muted">TX / RX</td><td class="mono">${j.tx_mhz.toFixed(5)} / ${j.rx_mhz.toFixed(5)} MHz</td></tr></table>`; }
+}
+async function rm(ch) {
+  if (!confirm(`Remove voice channel ${ch}? The control channel will be restarted if running.`)) return;
+  try { const r = await api(`/api/pairing/voice-channels/${ch}`, {method: "DELETE"}); $("#rmOut").textContent = r.restart ? `${r.restart.cmd}: ${r.restart.ok ? "ok" : "failed"}` : "config updated"; }
+  catch (e) { $("#rmOut").textContent = e.message; } load();
+}
+if ($("#mk")) $("#mk").onclick = async () => { try { const r = await api("/api/pairing/codes", {method: "POST"});
+  $("#code").textContent = r.code; $("#codeHint").textContent = `Expires at ${new Date(r.expires * 1000).toLocaleTimeString()}. Control Pi address: ${location.origin}`; }
+  catch (e) { $("#code").innerHTML = `<span class="err" style="font-size:14px">${esc(e.message)}</span>`; } };
+load(); setInterval(load, 5000);
 </script>
 {% endblock %}

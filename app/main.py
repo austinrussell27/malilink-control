@@ -26,7 +26,7 @@ app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=APP_DIR / "templates")
 app.include_router(pairing.router)
 
-OPEN_PATHS = ("/static/", "/api/local/", "/api/pairing/claim", "/healthz")
+OPEN_PATHS = ("/static/", "/favicon.ico", "/api/local/", "/api/pairing/claim", "/healthz")
 
 
 @app.middleware("http")
@@ -80,9 +80,11 @@ def page_logs(request: Request):
 def page_program(request: Request):
     st = state.load()
     radio, err = None, None
-    if st.get("wizard"):
+    if st.get("role") == "voice":
+        err = "This Pi is a voice channel. Radios are programmed against the control channel - open Program radio on the control Pi."
+    elif st.get("wizard"):
         try:
-            radio = generate(WizardInput(**st["wizard"]), st.get("secrets")).radio
+            radio = generate(WizardInput(**st["wizard"]), st.get("secrets"), st["pairing"]["voice_channels"]).radio
         except Exception as e:
             err = str(e)
     return templates.TemplateResponse(request, "program.html", ctx(request, "program", radio=radio, err=err))
@@ -96,6 +98,11 @@ def page_trunking(request: Request):
 @app.get("/about", response_class=HTMLResponse)
 def page_about(request: Request):
     return templates.TemplateResponse(request, "about.html", ctx(request, "about"))
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return RedirectResponse("/static/favicon.ico")
 
 
 @app.get("/healthz")
@@ -147,7 +154,8 @@ async def api_preview(request: Request):
     body = await request.json()
     try:
         w = WizardInput(**body)
-        g = generate(w, state.load().get("secrets"))
+        st = state.load()
+        g = generate(w, st.get("secrets"), st["pairing"]["voice_channels"] if w.topology == "trunked" else None)
     except ValidationError as e:
         raise HTTPException(422, _validation_detail(e))
     except ValueError as e:
@@ -166,16 +174,19 @@ async def api_apply(request: Request):
     if not (w.ack_license and w.ack_terms):
         raise HTTPException(400, "Please confirm the licensing and DVMProject terms first.")
     st = state.load()
+    if st.get("role") == "voice":
+        raise HTTPException(409, "This Pi is paired as a voice channel. Unpair it on the control Pi first.")
+    vcs = st["pairing"]["voice_channels"] if w.topology == "trunked" else None
     try:
-        g = generate(w, st.get("secrets"))
+        g = generate(w, st.get("secrets"), vcs)
     except ValueError as e:
         raise HTTPException(400, str(e))
     if g.errors:
         raise HTTPException(400, g.errors)
     written = write_files(g)
     st.update(wizard=w.model_dump(), secrets=g.secrets, rest_password=g.secrets["rest_password"],
-              fne_rest_password=g.secrets["fne_rest_password"] if w.network_mode == "local_fne" else None,
-              setup_complete=True, role="conventional")
+              fne_rest_password=g.secrets["fne_rest_password"] if (w.network_mode == "local_fne" or w.topology == "trunked") else None,
+              setup_complete=True, role="control" if w.topology == "trunked" else "conventional")
     state.save(st)
     return {"ok": True, "written": written, "dry_run": settings.dry_run, "warnings": g.warnings}
 
@@ -198,9 +209,11 @@ def api_service_status(unit: str):
 def api_service(unit: str, verb: str):
     st = state.load()
     if verb in ("start", "restart", "enable"):
-        w = st.get("wizard") or {}
-        if not (w.get("ack_license") and w.get("ack_terms")):
+        acks = (st.get("pairing", {}).get("joined") or {}) if st.get("role") == "voice" else (st.get("wizard") or {})
+        if not (acks.get("ack_license") and acks.get("ack_terms")):
             raise HTTPException(400, "Finish setup and confirm the licensing notice before starting.")
+        if unit == settings.host_unit and st.get("role") == "control" and not st["pairing"]["voice_channels"]:
+            raise HTTPException(400, "Pair at least one voice channel first - dvmhost will not start with an empty voice channel list.")
     try:
         return systemd.action(unit, verb)
     except ValueError:
@@ -244,7 +257,7 @@ def api_logs(node_id: str, kind: str = "system", lines: int = 200):
 
 
 def _cluster_ok(request: Request) -> None:
-    keys = {(st_key := state.load().get("pairing", {}).get("joined", {}).get("bundle", {}).get("cluster_key"))} - {None}
+    keys = {(state.load().get("pairing", {}).get("joined") or {}).get("cluster_key")} - {None}
     if keys and request.headers.get("X-Malilink-Cluster-Key") not in keys:
         raise HTTPException(403, "bad cluster key")
 

@@ -1,3 +1,5 @@
+<p align="center"><img src="app/static/malilink-logo-800.jpg" width="560" alt="Malinois Link Communications Network"></p>
+
 # Malinois Link Control
 
 **Brand:** Malinois Link Communication Network — a friendly web app for setting up and running a
@@ -11,17 +13,18 @@ Raspberry Pi 5, without editing YAML by hand. Reach it from your phone over Tail
 
 ![dashboard](docs/screenshots/dashboard.png)
 
-## What it does (v0.1)
+## What it does (v0.2)
 
 | Area | Status |
 |---|---|
-| **Install DVM** (wizard step 1): apt deps → clone → `cmake`/`make` → `make install` → `dvmhost` user → systemd units, as a background job with live progress | ✅ real (dry-run simulation when not on a Pi) |
+| **Install DVM** (wizard step 2, after Welcome): apt deps → clone → `cmake`/`make` → `make install` → `dvmhost` user → systemd units, as a background job with live progress | ✅ real (dry-run simulation when not on a Pi) |
 | **P25 conventional wizard** → `config.yml`, `iden_table.dat`, `talkgroup_rules.yml`, `fne-config.yml` generated from the repo's example files with ruamel.yaml (comments preserved), talkgroups validated against the repo JSON schema | ✅ real |
 | **Start/stop** dvmhost / dvmfne via systemd | ✅ real (simulated in dry-run) |
 | **Program your radio** page (RX/TX freq, NAC, talkgroups) | ✅ real |
 | **Dashboard**: per-Pi status (service, uptime, mode, TX, modem, freqs), who's talking, grants, affiliations, recent calls, live logs | ✅ live data layer + demo data layer |
-| **Trunked / multi-Pi** (control channel + voice channels via pairing code) | 🟡 designed; pairing API works, config writing is TODO (`app/pairing.py`) |
+| **P25 trunked, multi-Pi**: wizard "Trunked" makes this Pi the control channel; extra Pis use "Add this Pi as a voice channel" + a pairing code. The control Pi assigns the channel, rewrites its `voiceChNo` list and restarts dvmhost; the voice Pi writes its own VC config pointing back at the control Pi | ✅ implemented, tested in dry-run (not yet on RF hardware) |
 | **DMR / NXDN** | 🟡 visible in the wizard as "coming next" |
+| Branding: Malinois Link logo in header, favicon, About and the setup welcome screen | ✅ |
 
 ## Install on the Pi (Raspberry Pi OS Lite, Debian trixie, arm64)
 
@@ -69,12 +72,14 @@ app/
   configgen/            generate.py (config.yml/fne-config.yml), iden.py (freq math), talkgroups.py (+schema)
   services/             systemd.py (start/stop/status), installer.py (Install DVM background job)
   data/                 base.py (interface), live.py, demo.py, dvmrest.py (read-only REST client), logparse.py
-  pairing.py            trunking pairing API (design + stub)
+  pairing.py            trunking pairing API (codes, claim, join, remove)
   templates/, static/   Jinja pages + vanilla JS/CSS (no build step)
 dvm_templates/          example configs + schema + dvmhost.service copied from dvmhost (SOURCE.txt = commit)
 systemd/                malilink-control.service, dvmfne.service
 scripts/                install-app.sh, refresh_templates.sh
-tests/                  test_smoke.py, fake_dvmhost.py (fake REST server for manual testing)
+tests/                  test_smoke.py, test_pairing.py (2-3 live app processes), test_dvm_yaml.py,
+                        dvmyaml/ (dvmhost YAML parser checker), fake_dvmhost.py (fake REST server)
+docs/screenshots/       UI screenshots
 ```
 
 ## How it talks to DVM (verified in dvmhost source)
@@ -87,8 +92,37 @@ tests/                  test_smoke.py, fake_dvmhost.py (fake REST server for man
 * Config parsing quirks honoured: `channelNo`, `nac`, `netId`, `sysId`, `rfssId`, `siteId` are hex strings;
   `voiceChNo` must not be empty; iden offset must be non-zero (simplex uses `simplexSameFrequency`).
 
-## Multi-Pi / trunking design
-See **Trunking** page and `app/pairing.py`. Control Pi issues a 10-minute code → new Pi calls
-`/api/pairing/join` → control's `/api/pairing/claim` allocates the next channel number and returns a
-bundle (site IDs, CC RPC, FNE creds, cluster key) and adds the Pi to the dashboard, which aggregates
-each Pi's `/api/local/snapshot`. TODO: write `voiceChNo` + restart on the CC, write the VC config, enable P25 CC.
+## Trunked P25 across several Pis
+
+1. **Control Pi:** Setup → P25 → **Trunked** → finish the wizard (it always runs dvmfne). dvmhost will
+   not start until at least one voice channel is paired (dvmhost refuses an empty `voiceChNo`).
+2. **Trunking → Create pairing code** (10 min, single use).
+3. **Each voice Pi:** install the app, Setup → **Add this Pi as a voice channel**, enter
+   `http://<control-pi>:8080`, the code, its modem port and (optionally) a specific TX frequency.
+4. The control Pi gives it the next free channel (`step = bandwidth / spacing`, i.e. 12.5 kHz apart) on
+   the same identity row, regenerates its config with the new `voiceChNo` entry and restarts dvmhost if
+   running. The voice Pi writes its config, `iden_table.dat` and `talkgroup_rules.yml`; you start it from
+   its dashboard. Remove a VC from the control Pi's Trunking page.
+5. The control Pi's dashboard pulls every voice Pi's status/logs via `/api/local/*` (cluster key).
+
+Generated key combinations:
+
+| | Control channel | Voice channel |
+|---|---|---|
+| `protocols.p25.control.enable / dedicated` | true / true | false / false |
+| `system.config.authoritative / supervisor` | true / true | false / false |
+| `system.config.controlCh` | left at default (`rpcPort: 0`) | `rpcAddress`=control Pi IP, `rpcPort: 9890`, `rpcPassword`, `notifyEnable: true` |
+| `system.config.voiceChNo` | one entry per VC (`channelId`, hex `channelNo`, VC `rpcAddress`, 9890, `rpcPassword`) | own channel only |
+| `network` | → local dvmfne, `rpcAddress: 0.0.0.0` | → control Pi's dvmfne, `id` = peerId + chNo, `rpcAddress: 0.0.0.0` |
+
+Verified in source: the keys and how they're parsed (`Host.Config.cpp`, `p25/Control.cpp`), VC→CC
+notification needs address + non-zero port + `notifyEnable`, `dedicated` only applies with
+`control.enable`, `supervisor` only read when `authoritative`, and RPC uses SHA-256(`rpcPassword`) as the
+pre-shared key (`NetRPC.cpp`) → **one shared rpcPassword** across the system. The CC/VC
+authoritative/supervisor/dedicated values match the repo's own `tools/dvmcfggen` templates.
+**Unverified:** that this combination trunks correctly on air (not run on hardware), whether a VC needs
+its own channel in `voiceChNo`, and Tailscale/UDP RPC behaviour between Pis.
+
+`tests/dvmyaml/` builds a tiny checker against dvmhost's own YAML parser
+(`tests/dvmyaml/build.sh /path/to/dvmhost`); `tests/test_dvm_yaml.py` then parses the generated CC, VC
+and conventional configs with it (skipped if not built).

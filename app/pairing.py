@@ -1,44 +1,47 @@
-"""Trunking: control-channel Pi <-> voice-channel Pi pairing.  ** DESIGN + STUB **
+"""Trunking: control-channel Pi <-> voice-channel Pi pairing.
 
 Flow
 ----
-1. On the CONTROL Pi (role=control) the user clicks "Add a voice channel":
-     POST /api/pairing/codes            -> {"code": "K7Q-4MD", "expires": <epoch>}  (10 min, single use)
-2. On the NEW Pi the user opens this same app, picks "Add a voice channel" mode and enters the
-   control Pi's address (Tailscale name/IP) + code:
-     POST /api/pairing/join  {"control_url": "http://mali-cc:8080", "code": "K7Q-4MD"}
-   which calls, on the control Pi:
-     POST /api/pairing/claim {"code","name","url","rpc_address","rpc_port"}
-3. The control Pi allocates the next free channelNo on its iden row and answers with a bundle:
-     {channelId, channelNo (hex), iden_table (text), site {nac, netId, sysId, rfssId, siteId},
-      controlCh {rpcAddress, rpcPort, rpcPassword}, network {address, port, password, peerId},
-      cluster_key}
-   and records the VC in state["pairing"]["voice_channels"] + state["nodes"] (dashboard).
-4. TODO(control config): append to system.config.voiceChNo in config.yml
-     {channelId, channelNo, rpcAddress: <vc tailscale ip>, rpcPort: 9890, rpcPassword}
-   then `systemctl restart dvmhost`.  (all keys verified in configs/config.example.yml)
-5. TODO(voice config): the VC Pi writes its config.yml from the template with
-     protocols.p25.control.enable=false, system.config.channelId/channelNo from the bundle,
-     system.config.controlCh.{rpcAddress,rpcPort,rpcPassword,notifyEnable=true},
-     network.{address,port,password,id} pointing at the control Pi's dvmfne,
-     voiceChNo=[own channel], the shared iden_table.dat, and starts dvmhost.
-6. TODO(control channel): control Pi itself needs protocols.p25.control.enable=true,
-   dedicated=true (verify recommended CC flags with DVMProject docs before enabling).
+1. CONTROL Pi (set up with the wizard as P25 -> Trunked, role=control):
+     POST /api/pairing/codes  -> {"code": "K7Q-4MD", "expires": <epoch>}   (10 min, single use)
+2. NEW Pi, "Add a voice channel" mode (Setup welcome screen / Trunking page):
+     POST /api/pairing/join {control_url, code, name, modem_*, requested_tx_mhz?, ack_license, ack_terms}
+   which calls the control Pi:
+     POST /api/pairing/claim {code, name, url, rpc_address?, requested_tx_mhz?}
+3. Control Pi: allocates the next free channel number (step = bandwidth/spacing so channels don't
+   overlap) or the requested frequency, appends the VC to its state, regenerates its config.yml with
+   the new system.config.voiceChNo list, writes it and restarts dvmhost if it was running.
+   Responds with a bundle: channel, iden row + iden_table.dat text, site IDs, talkgroups,
+   RPC {address, port, password}, FNE {address, port, password, peerId}, cluster_key.
+4. New Pi: resolves the control Pi's address to an IP, writes its own VC config.yml
+   (controlCh -> control Pi RPC, network -> control Pi dvmfne), iden_table.dat and
+   talkgroup_rules.yml, and sets role=voice. It does NOT start dvmhost by itself (safety: the user
+   starts it from the dashboard).
+DELETE /api/pairing/voice-channels/{chNo} removes a VC from the control Pi (rewrites + restarts).
 
-UNVERIFIED: exact recommended CC/VC flag combination for dvmhost trunking - confirm against the
-DVMProject wiki before implementing steps 4-6. Nothing here keys a transmitter.
+Addresses: the control Pi records the VC's RPC address as the source IP of the claim request
+(over Tailscale this is the VC's 100.x address) unless rpc_address is given. The VC uses the host
+it reached the control Pi on. dvmhost resolves hostnames (common/network/udp/Socket::lookup), but we
+store IPs anyway. Nothing here keys a transmitter.
 """
 from __future__ import annotations
 
 import secrets
+import socket
 import string
 import time
+from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from . import state
+from .configgen import iden
+from .configgen.generate import (RPC_PORT, VoiceLocal, WizardInput, channel_for_freq, channel_step, generate,
+                                 generate_voice_channel, next_free_channel, write_files)
+from .services import systemd
 from .settings import settings
 
 router = APIRouter(prefix="/api/pairing", tags=["pairing"])
@@ -51,11 +54,31 @@ def _new_code() -> str:
     return f"{s[:3]}-{s[3:]}"
 
 
+def _is_control(st: dict) -> bool:
+    return st.get("role") == "control" and (st.get("wizard") or {}).get("topology") == "trunked"
+
+
+def apply_control_config(st: dict) -> dict:
+    """Regenerate + write the control Pi's files with the current voice-channel list, then restart
+    dvmhost if it is running. Returns {"written": [...], "restart": {...}|None}."""
+    w = WizardInput(**st["wizard"])
+    g = generate(w, st.get("secrets"), st["pairing"]["voice_channels"])
+    written = write_files(g)
+    restart = None
+    try:
+        if systemd.status(settings.host_unit)["active"]:
+            # dvmhost has no config reload; a restart is required for voiceChNo changes.
+            restart = systemd.action(settings.host_unit, "restart")
+    except Exception as e:  # pragma: no cover
+        restart = {"ok": False, "error": str(e)}
+    return {"written": written, "restart": restart}
+
+
 @router.post("/codes")
 def create_code():
     st = state.load()
-    if st.get("role") not in ("control",) and not (settings.demo or settings.dry_run):
-        raise HTTPException(409, "Only a control-channel Pi can issue pairing codes (trunking is coming next).")
+    if not _is_control(st):
+        raise HTTPException(409, "Set this Pi up as a P25 trunked control channel first (Setup -> Trunked).")
     codes = {c: v for c, v in st["pairing"]["codes"].items() if v["expires"] > time.time()}
     code = _new_code()
     codes[code] = {"expires": time.time() + CODE_TTL}
@@ -66,76 +89,165 @@ def create_code():
 
 @router.get("/voice-channels")
 def list_vcs():
-    return {"voice_channels": state.load()["pairing"]["voice_channels"]}
+    st = state.load()
+    out = []
+    if _is_control(st):
+        g = generate(WizardInput(**st["wizard"]), st.get("secrets"), st["pairing"]["voice_channels"])
+        e = g.plan.entry
+        cc = {"name": settings.node_name + " (control)", "channelNo": g.plan.channel_no,
+              "tx_mhz": g.plan.tx_hz / 1e6, "rx_mhz": g.plan.rx_hz / 1e6, "control": True}
+        out = [cc] + [{**v, "tx_mhz": e.tx_for(v["channelNo"]) / 1e6, "rx_mhz": e.rx_for(v["channelNo"]) / 1e6}
+                      for v in st["pairing"]["voice_channels"]]
+    return {"role": st.get("role"), "channels": out, "voice_channels": st["pairing"]["voice_channels"],
+            "joined": (st["pairing"].get("joined") or {}).get("summary")}
 
 
 class Claim(BaseModel):
     code: str
     name: str
-    url: str
-    rpc_address: str
-    rpc_port: int = 9890
+    url: Optional[str] = None   # VC's Malinois Link Control URL; default http://<source ip>:<app_port>
+    app_port: int = 8080
+    rpc_address: Optional[str] = None
+    rpc_port: int = RPC_PORT
+    requested_tx_mhz: Optional[float] = None
 
 
 @router.post("/claim")
-def claim(c: Claim):
+def claim(c: Claim, request: Request):
     st = state.load()
+    if not _is_control(st):
+        raise HTTPException(409, "That Pi is not a trunked control channel.")
     code = c.code.strip().upper()
     entry = st["pairing"]["codes"].pop(code, None)
+    state.save(st)  # consume the code even if the rest fails
     if not entry or entry["expires"] < time.time():
-        state.save(st)
         raise HTTPException(403, "Invalid or expired pairing code")
-    used = {1} | {v["channelNo"] for v in st["pairing"]["voice_channels"]}  # ch 1 = control channel
-    ch = next(n for n in range(2, 4096) if n not in used)
-    w = st.get("wizard") or {}
+    w = WizardInput(**st["wizard"])
+    g = generate(w, st.get("secrets"), st["pairing"]["voice_channels"])
+    plan, sec = g.plan, g.secrets
+    used = {plan.channel_no} | {v["channelNo"] for v in st["pairing"]["voice_channels"]}
+    try:
+        if c.requested_tx_mhz:
+            ch = channel_for_freq(plan.entry, c.requested_tx_mhz)
+            if ch in used:
+                raise ValueError("That frequency is already used by another channel in this system")
+        else:
+            ch = next_free_channel(plan.channel_no, used, channel_step(plan.entry))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if any(v["name"] == c.name for v in st["pairing"]["voice_channels"]):
+        raise HTTPException(409, f"A voice channel named {c.name} is already paired")
+    rpc_addr = c.rpc_address or (request.client.host if request.client else None)
+    if not rpc_addr:
+        raise HTTPException(400, "Could not determine the voice channel's address")
     key = secrets.token_urlsafe(24)
-    vc = {"name": c.name, "url": c.url, "rpc_address": c.rpc_address, "rpc_port": c.rpc_port,
+    vc_url = c.url or f"http://{request.client.host if request.client else rpc_addr}:{c.app_port}"
+    vc = {"name": c.name, "url": vc_url, "rpc_address": rpc_addr, "rpc_port": c.rpc_port,
           "channelNo": ch, "paired_at": time.time()}
     st["pairing"]["voice_channels"].append(vc)
-    st["nodes"].append({"name": c.name, "url": c.url, "role": "voice", "chNo": ch, "key": key})
+    st["nodes"] = [n for n in st["nodes"] if n["name"] != c.name] + [
+        {"name": c.name, "url": vc_url, "role": "voice", "chNo": ch, "key": key}]
     state.save(st)
-    bundle = {
-        "channelId": 1, "channelNo": format(ch, "X"),
-        "site": {k: w.get(k) for k in ("nac", "wacn", "sys_id", "rfss_id", "site_id")},
-        "controlCh": {"rpcAddress": "TODO: control Pi tailscale IP", "rpcPort": 9890,
-                      "rpcPassword": (st.get("secrets") or {}).get("rpc_password")},
-        "network": {"address": "TODO: control Pi tailscale IP", "port": w.get("fne_port", 62031),
-                    "password": (st.get("secrets") or {}).get("fne_password"), "peerId": 100000 + ch},
-        "iden_table": "TODO: copy of control Pi iden_table.dat",
+    applied = apply_control_config(st)
+    e = plan.entry
+    cc_host = request.url.hostname  # the address the VC used to reach us
+    return {
+        "channelNo": ch, "channelId": e.channel_id,
+        "tx_mhz": e.tx_for(ch) / 1e6, "rx_mhz": e.rx_for(ch) / 1e6,
+        "iden": {"channel_id": e.channel_id, "base_freq": e.base_freq, "spacing_khz": e.spacing_khz,
+                 "offset_mhz": e.offset_mhz, "bandwidth_khz": e.bandwidth_khz},
+        "iden_table": g.files["iden_table.dat"],
+        "site": {"nac": w.nac, "wacn": w.wacn, "sys_id": w.sys_id, "rfss_id": w.rfss_id, "site_id": w.site_id},
+        "system_name": w.system_name, "callsign": w.callsign, "location": w.location,
+        "talkgroups": [t.model_dump() for t in w.talkgroups],
+        "rpc": {"address": cc_host, "port": RPC_PORT, "password": sec["rpc_password"]},
+        "network": {"address": cc_host, "port": w.fne_port, "password": sec["fne_password"],
+                    "peerId": w.peer_id + ch},
         "cluster_key": key,
-        "applied": False,
-        "todo": ["control: append voiceChNo entry + restart dvmhost",
-                 "voice: write VC config.yml from bundle + start dvmhost"],
+        "control": {"name": settings.node_name, "restart": applied["restart"]},
     }
-    # TODO(trunking): apply_vc_to_control_config(vc) -> ruamel edit of system.config.voiceChNo
-    return bundle
+
+
+@router.delete("/voice-channels/{ch_no}")
+def remove_vc(ch_no: int):
+    st = state.load()
+    if not _is_control(st):
+        raise HTTPException(409, "Not a control channel")
+    vcs = st["pairing"]["voice_channels"]
+    gone = [v for v in vcs if v["channelNo"] == ch_no]
+    if not gone:
+        raise HTTPException(404, "No such voice channel")
+    st["pairing"]["voice_channels"] = [v for v in vcs if v["channelNo"] != ch_no]
+    st["nodes"] = [n for n in st["nodes"] if n.get("name") != gone[0]["name"]]
+    state.save(st)
+    return {"ok": True, **apply_control_config(st)}
 
 
 class Join(BaseModel):
     control_url: str
     code: str
-    name: str | None = None
-    my_url: str | None = None
-    rpc_address: str | None = None
+    name: Optional[str] = None
+    my_url: Optional[str] = None
+    rpc_address: Optional[str] = None
+    requested_tx_mhz: Optional[float] = None
+    modem_type: str = "uart"
+    modem_port: str = "/dev/ttyUSB0"
+    modem_speed: int = 115200
+    ack_license: bool = False
+    ack_terms: bool = False
+
+
+def _resolve(host: str) -> str:
+    try:
+        return socket.gethostbyname(host)
+    except Exception:
+        return host  # dvmhost can resolve hostnames itself (Socket::lookup)
 
 
 @router.post("/join")
-def join(j: Join):
+def join(j: Join, request: Request):
     """Run on the NEW voice-channel Pi."""
-    body = {"code": j.code, "name": j.name or settings.node_name,
-            "url": j.my_url or f"http://{settings.node_name}:8080",
-            "rpc_address": j.rpc_address or settings.node_name, "rpc_port": 9890}
-    try:
-        r = httpx.post(j.control_url.rstrip("/") + "/api/pairing/claim", json=body, timeout=5)
-    except Exception as e:
-        raise HTTPException(502, f"Could not reach control Pi: {e}")
-    if r.status_code != 200:
-        raise HTTPException(r.status_code, r.json().get("detail", r.text))
-    bundle = r.json()
+    if not (j.ack_license and j.ack_terms):
+        raise HTTPException(400, "Please confirm the licensing and DVMProject terms first.")
     st = state.load()
-    st["role"] = "voice"
-    st["pairing"]["joined"] = {"control_url": j.control_url, "bundle": bundle}
+    if st.get("role") == "control":
+        raise HTTPException(409, "This Pi is a control channel; use a separate Pi for each voice channel.")
+    name = (j.name or settings.node_name).strip()
+    try:
+        local = VoiceLocal(name=name, modem_type=j.modem_type, modem_port=j.modem_port, modem_speed=j.modem_speed,
+                           ack_license=j.ack_license, ack_terms=j.ack_terms)
+    except Exception as e:
+        raise HTTPException(422, str(e))
+    control_url = j.control_url.strip().rstrip("/")
+    if "://" not in control_url:
+        control_url = "http://" + control_url
+    body = {"code": j.code, "name": name, "url": j.my_url, "app_port": request.url.port or 8080,
+            "rpc_address": j.rpc_address, "requested_tx_mhz": j.requested_tx_mhz}
+    try:
+        r = httpx.post(control_url + "/api/pairing/claim", json=body, timeout=15)
+    except Exception as e:
+        raise HTTPException(502, f"Could not reach the control Pi: {e}")
+    if r.status_code != 200:
+        try:
+            detail = r.json().get("detail", r.text)
+        except Exception:
+            detail = r.text
+        raise HTTPException(r.status_code, detail)
+    bundle = r.json()
+    # Use an IP for the control Pi in our config (the host we reached it on).
+    cc_ip = _resolve(urlparse(control_url).hostname or bundle["rpc"]["address"])
+    bundle["rpc"]["address"] = cc_ip
+    bundle["network"]["address"] = cc_ip
+    g = generate_voice_channel(bundle, local, st.get("rest_password"))
+    written = write_files(g)
+    summary = {"control_url": control_url, "control_ip": cc_ip, "channelNo": bundle["channelNo"],
+               "tx_mhz": bundle["tx_mhz"], "rx_mhz": bundle["rx_mhz"], "system_name": bundle["system_name"],
+               "name": name}
+    st.update(role="voice", setup_complete=True, rest_password=g.secrets["rest_password"], fne_rest_password=None,
+              secrets={**(st.get("secrets") or {}), "rest_password": g.secrets["rest_password"]})
+    st["pairing"]["joined"] = {"summary": summary, "cluster_key": bundle["cluster_key"],
+                               "ack_license": j.ack_license, "ack_terms": j.ack_terms,
+                               "bundle": {k: v for k, v in bundle.items() if k not in ("rpc", "network")}}
     state.save(st)
-    # TODO(trunking): write_voice_channel_config(bundle) + systemd.action("dvmhost","start")
-    return {"ok": True, "bundle": bundle, "applied": False,
-            "note": "Paired. Writing the voice-channel config is coming next (see TODOs in app/pairing.py)."}
+    return {"ok": True, "written": written, "summary": summary, "warnings": g.warnings, "dry_run": settings.dry_run,
+            "note": "Voice channel configured. Start dvmhost from the dashboard when you're ready to go on the air."}

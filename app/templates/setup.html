@@ -5,14 +5,43 @@
 <p class="sub">A step-by-step guide. Nothing is written until the last step, and every value has a sensible default.</p>
 <div class="wiz">
   <ol class="steps" id="steps">
-    {% for s in ["Install DVM","System type","Name & callsign","Frequencies","System IDs","Modem","Network","Talkgroups","Review & save"] %}
+    {% for s in ["Welcome","Install DVM","System type","Name & callsign","Frequencies","System IDs","Modem","Network","Talkgroups","Review & save"] %}
     <li data-step="{{ loop.index0 }}"><span class="n">{{ loop.index }}</span><span class="l">{{ s }}</span></li>
     {% endfor %}
   </ol>
   <form id="wiz" class="card" onsubmit="return false" novalidate>
 
-  <!-- 0 INSTALL -->
+  <!-- 0 WELCOME -->
   <section class="panel" data-step="0">
+    <div class="hero">
+      <img src="/static/malilink-logo-800.jpg" srcset="/static/malilink-logo-800.jpg 800w, /static/malilink-logo.jpg 1200w" sizes="(max-width:860px) 100vw, 520px" alt="Malinois Link Communications Network">
+      <div>
+        <h2 style="font-size:22px">Welcome to Malinois Link Control</h2>
+        <p class="muted">This guide installs the DVM software, builds your configuration and gets your Pi on the air. What would you like this Pi to be?</p>
+        <div class="choices" data-group="purpose" style="grid-template-columns:1fr">
+          <div class="choice sel" data-val="new"><b>Set up a new system</b><span class="muted small">A conventional repeater/hotspot, or the <strong>control channel</strong> of a new trunked system.</span></div>
+          <div class="choice" data-val="voice"><b>Add this Pi as a voice channel</b><span class="muted small">Join an existing trunked system with a pairing code from its control Pi.</span></div>
+        </div>
+      </div>
+    </div>
+    <div id="joinBox" class="card" style="margin-top:18px;background:var(--panel2)" hidden>
+      <h2>Join a trunked system</h2>
+      <p class="muted small">On the control Pi open <b>Trunking → Create pairing code</b>. Install DVM on this Pi first (next step) if you haven't.</p>
+      <div class="grid g2">
+        <div class="field"><label for="j_control">Control Pi address</label><input id="j_control" placeholder="http://mali-cc:8080"><div class="hint">Its Tailscale name or 100.x.y.z address, with port 8080.</div></div>
+        <div class="field"><label for="j_code">Pairing code</label><input id="j_code" class="mono" placeholder="K7Q-4MD" style="text-transform:uppercase"></div>
+        <div class="field"><label for="j_name">Name for this Pi</label><input id="j_name" value="{{ settings.node_name }}"></div>
+        <div class="field"><label for="j_port">Modem serial port</label><input id="j_port" list="ports" value="/dev/ttyUSB0" class="mono"></div>
+        <div class="field"><label for="j_tx">Voice channel transmit frequency, MHz (optional)</label><input id="j_tx" type="number" step="0.00001" placeholder="leave blank for the next free channel"><div class="hint">Must be on the control channel's band plan; receive is set automatically from its offset.</div></div>
+      </div>
+      <label class="check"><input type="checkbox" id="j_ack_license"> I hold an appropriate license for this frequency and will identify as required.</label>
+      <label class="check" style="margin-top:6px"><input type="checkbox" id="j_ack_terms"> I accept the DVMProject terms (personal, non-commercial, never public-safety).</label>
+      <div class="row" style="margin-top:12px"><button class="btn primary" type="button" id="joinBtn">Join as voice channel</button><span id="joinMsg" class="small"></span></div>
+    </div>
+  </section>
+
+  <!-- 1 INSTALL -->
+  <section class="panel" data-step="1">
     <h2>Install the DVM software</h2>
     <p class="muted">Downloads and builds <b>dvmhost</b> and <b>dvmfne</b> from <a href="https://github.com/DVMProject/dvmhost" target="_blank" rel="noopener">github.com/DVMProject/dvmhost</a>, installs them to <code>/usr/local</code>, creates the <code>dvmhost</code> user and installs the systemd services. Safe to run again to update. On a Pi 5 the build takes roughly 15–30 minutes.</p>
     <div class="row" style="margin:14px 0">
@@ -26,7 +55,7 @@
   </section>
 
   <!-- 1 TYPE -->
-  <section class="panel" data-step="1">
+  <section class="panel" data-step="2">
     <h2>What kind of system do you want?</h2>
     <h3>Digital mode</h3>
     <div class="choices" data-group="mode">
@@ -37,12 +66,12 @@
     <h3 style="margin-top:20px">Layout</h3>
     <div class="choices" data-group="topology">
       <div class="choice sel" data-val="conventional"><b>Conventional</b><span class="muted small">One repeater or hotspot on one frequency pair. Best place to start.</span></div>
-      <div class="choice off" data-val="trunked"><span class="pill gray tag">coming next</span><b>Trunked</b><span class="muted small">One Pi is the control channel, extra Pis join as voice channels. <a href="/trunking">See the design</a>.</span></div>
+      <div class="choice" data-val="trunked"><span class="pill blue tag">multi-Pi</span><b>Trunked</b><span class="muted small">This Pi becomes the <strong>control channel</strong>; extra Pis join as voice channels with a pairing code. <a href="/trunking">How it works</a>.</span></div>
     </div>
   </section>
 
   <!-- 2 IDENTITY -->
-  <section class="panel" data-step="2">
+  <section class="panel" data-step="3">
     <h2>Name & callsign</h2>
     <div class="grid g2">
       <div class="field"><label for="system_name">System name</label><input id="system_name" name="system_name" maxlength="32" placeholder="MALINOIS1"><div class="hint">Shown in logs and on the network. Short, no spaces works best.</div></div>
@@ -55,8 +84,8 @@
   </section>
 
   <!-- 3 FREQS -->
-  <section class="panel" data-step="3">
-    <h2>Frequencies</h2>
+  <section class="panel" data-step="4">
+    <h2>Frequencies <span class="pill blue" id="ccTag" hidden>control channel</span></h2>
     <p class="muted">Enter what <b>this Pi's radio</b> does. A repeater transmits on its output and listens on its input. For a simplex hotspot, use the same frequency twice.</p>
     <div class="grid g2">
       <div class="field"><label for="tx_mhz">Transmit (output) frequency, MHz</label><input id="tx_mhz" name="tx_mhz" type="number" step="0.00001" placeholder="444.50000"><div class="hint">Your radios <b>listen</b> here.</div></div>
@@ -67,7 +96,7 @@
   </section>
 
   <!-- 4 IDS -->
-  <section class="panel" data-step="4">
+  <section class="panel" data-step="5">
     <h2>System IDs</h2>
     <p class="muted">The NAC is like a "tone" for P25 — your radios must use the same one. Defaults are fine for a single site.</p>
     <div class="grid g2">
@@ -84,7 +113,7 @@
   </section>
 
   <!-- 5 MODEM -->
-  <section class="panel" data-step="5">
+  <section class="panel" data-step="6">
     <h2>Modem</h2>
     <div class="grid g2">
       <div class="field"><label for="modem_type">Modem connection</label>
@@ -96,13 +125,14 @@
   </section>
 
   <!-- 6 NETWORK -->
-  <section class="panel" data-step="6">
+  <section class="panel" data-step="7">
     <h2>Network</h2>
     <div class="choices" data-group="network_mode">
       <div class="choice sel" data-val="local_fne"><b>Run a network hub here</b><span class="muted small">Recommended. Runs dvmfne on this Pi so talkgroups, parrot and future voice channels work.</span></div>
       <div class="choice" data-val="remote_fne"><b>Join an existing hub</b><span class="muted small">Connect to someone else's FNE.</span></div>
       <div class="choice" data-val="standalone"><b>Standalone</b><span class="muted small">Just a repeater, no network.</span></div>
     </div>
+    <div id="trunkNet" class="notice blue small" style="margin-top:12px" hidden>Trunked: the control channel always runs the network hub so voice channels can join over Tailscale.</div>
     <div id="remoteFields" class="grid g2" style="margin-top:16px" hidden>
       <div class="field"><label for="fne_address">Hub address</label><input id="fne_address" name="fne_address" value="127.0.0.1"></div>
       <div class="field"><label for="fne_port">Hub port</label><input id="fne_port" name="fne_port" type="number" value="62031"></div>
@@ -112,7 +142,7 @@
   </section>
 
   <!-- 7 TALKGROUPS -->
-  <section class="panel" data-step="7">
+  <section class="panel" data-step="8">
     <h2>Talkgroups</h2>
     <p class="muted">Talkgroups are like channels inside your system. A "parrot" talkgroup plays your transmission back to you — great for testing.</p>
     <table class="tgtable"><thead><tr><th style="width:110px">TG ID</th><th>Name</th><th>Description</th><th>Parrot</th><th></th></tr></thead><tbody id="tgBody"></tbody></table>
@@ -120,7 +150,7 @@
   </section>
 
   <!-- 8 REVIEW -->
-  <section class="panel" data-step="8">
+  <section class="panel" data-step="9">
     <h2>Review & save</h2>
     <div id="reviewErr" class="notice" hidden></div>
     <div id="reviewWarn"></div>
@@ -141,6 +171,7 @@
       <div class="row">
         <button class="btn" type="button" data-svc="dvmfne" data-verb="start" id="fneStart">Start network hub (dvmfne)</button>
         <button class="btn primary" type="button" data-svc="dvmhost" data-verb="start">Start dvmhost</button>
+        <a class="btn" href="/trunking" id="pairLink" hidden>Pair voice channels →</a>
         <a class="btn" href="/program">Program your radio →</a>
         <a class="btn" href="/dashboard">Dashboard →</a>
       </div>
