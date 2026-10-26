@@ -121,3 +121,70 @@ async function unpairVc(ch, name) {
     setTimeout(() => location.reload(), 2500);
   } catch (e) { unpairOut(`<span class="err">${esc(e.message)}</span>`); toast(e.message, "err"); }
 }
+
+// ---- modem / serial ports panel (About, node page, wizard). Read-only: never talks to the modem. ----
+function _yn(v, yes = "yes", no = "no") { return v == null ? '<span class="muted">?</span>' : v ? `<span style="color:var(--green)">${yes}</span>` : `<span style="color:var(--red)">${no}</span>`; }
+function renderPorts(scan, pick) {
+  const rows = (scan.ports || []).map(p => `<tr class="${p.likely_hat ? "hat" : ""}">
+    <td class="mono">${esc(p.path)}${p.target ? ` <span class="muted">→ ${esc(p.target)}</span>` : ""}</td>
+    <td class="small">${p.likely_hat ? '<span class="pill blue">likely hat</span> ' : ""}${esc(p.description || "")}</td>
+    <td>${_yn(p.exists)}</td><td title="read / write access for the ${esc(scan.user || "dvmhost")} user">${_yn(p.readable)} / ${_yn(p.writable)}</td>
+    ${pick ? `<td class="acts"><button type="button" class="btn sm${p.likely_hat ? " primary" : ""}" data-pick="${esc(p.target && p.kind !== "debug" ? p.target : p.path)}">Use</button></td>` : ""}</tr>`).join("");
+  const b = scan.boot || {};
+  const boot = b.config_path ? `<div class="small muted" style="margin-top:8px"><span class="mono">${esc(b.config_path)}</span>: enable_uart=${b.enable_uart == null ? "(not set)" : b.enable_uart ? "1" : "0"}${(b.dtparams || []).length ? " · dtparam=" + esc(b.dtparams.join(",")) : ""}${(b.dtoverlays || []).length ? " · dtoverlay=" + esc(b.dtoverlays.join(", ")) : ""}${(b.console || []).length ? ` · console=${esc(b.console.join(", "))}` : ""}</div>` : "";
+  return `<div class="row between" style="gap:8px;flex-wrap:wrap"><div class="small"><b>${esc(scan.model || "Unknown machine")}</b>${scan.likely_hat ? ` — likely hat port <span class="mono">${esc(scan.likely_hat)}</span>` : ""}</div>
+      ${scan.sample ? `<span class="pill amber" title="${esc(scan.sample_reason || "")}">SAMPLE DATA</span>` : ""}</div>
+    ${scan.sample ? `<div class="small muted">${esc(scan.sample_reason || "")}</div>` : ""}
+    <div class="small muted" style="margin:4px 0 8px">${esc(scan.likely_hat_reason || "")}</div>
+    ${rows ? `<div style="overflow-x:auto"><table class="t ports"><thead><tr><th>Port</th><th>What it is</th><th>Exists</th><th>${esc(scan.user || "dvmhost")} r / w</th>${pick ? '<th><span class="sr">Use</span></th>' : ""}</tr></thead><tbody>${rows}</tbody></table></div>`
+           : '<div class="empty">No serial ports found.</div>'}
+    ${boot}
+    ${(scan.hints || []).map(h => `<div class="notice small" style="margin-top:8px">${esc(h).replace(/`([^`]+)`/g, "<code>$1</code>")}</div>`).join("")}`;
+}
+function renderModem(d) {
+  if (d.error) return `<div class="empty">${esc(d.error)}</div>`;
+  const c = d.configured || {}, s = d.status || {}, m = s.modem || {};
+  const mhz = v => v ? (v / 1e6).toFixed(5) + " MHz" : "—";
+  const mism = c.config_port && c.port && c.config_port !== c.port;
+  const st = s.running ? (m.modemPort ? `<span class="pill green">dvmhost running</span> <span class="pill gray">${esc(s.state || "")}</span>${s.tx ? ' <span class="pill red" title="reported by dvmhost (read-only)">TX</span>' : ""}` : '<span class="pill amber">running · no modem info</span>') : '<span class="pill gray">dvmhost not running</span>';
+  const fields = [["Port", m.modemPort, 1], ["Type", m.portType], ["Speed", m.portSpeed], ["Firmware protocol", m.protoVer],
+    ["RX freq (effective)", m.rxFrequencyEffective != null ? mhz(m.rxFrequencyEffective) : null, 1], ["TX freq (effective)", m.txFrequencyEffective != null ? mhz(m.txFrequencyEffective) : null, 1],
+    ["RX level", m.rxLevel], ["RX / TX DC offset", m.rxDCOffset != null ? `${m.rxDCOffset} / ${m.txDCOffset}` : null], ["Gain mode", m.gainMode], ["V.24 connected", m.v24Connected == null ? null : m.v24Connected ? "yes" : "no"]]
+    .filter(f => f[1] != null && f[1] !== "").map(f => `<tr><td class="muted">${f[0]}</td><td class="${f[2] ? "mono" : ""}">${esc(f[1])}</td></tr>`).join("");
+  return `<table class="t"><tr><td class="muted">Configured port</td><td class="mono">${esc(c.port || "— not set yet")}${c.speed ? ` <span class="muted">@ ${esc(c.speed)}</span>` : ""}${c.source ? ` <span class="muted small">(${esc(c.source)})</span>` : ""}</td></tr>
+      ${c.config_file ? `<tr><td class="muted">config.yml</td><td class="mono">${esc(c.config_port || "—")} <span class="muted small">${esc(c.config_type || "")}</span>${mism ? ' <span class="pill amber">differs from wizard — re-save Setup</span>' : ""}</td></tr>` : ""}</table>
+    <h3 style="margin:14px 0 6px">Live modem status ${st}${s.sample ? ' <span class="pill amber">SAMPLE</span>' : ""}</h3>
+    ${fields ? `<table class="t">${fields}</table>` : ""}<div class="small muted">${esc(s.note || "")}</div>
+    <h3 style="margin:14px 0 6px">Serial ports on this Pi</h3>${renderPorts(d.scan || {}, false)}`;
+}
+async function loadModem(el, node = "local") {
+  el.innerHTML = '<div class="skeleton" style="height:120px"></div>';
+  try { el.innerHTML = renderModem(await api(`/api/modem?node=${encodeURIComponent(node)}`)); }
+  catch (e) { el.innerHTML = `<div class="empty">Modem info unavailable: ${esc(e.message)}</div>`; }
+}
+
+// ---- calm service health (dashboard + node page). States come from app/data/health.py ----
+const HEALTH_PILL = {ok: "green", info: "blue", idle: "gray", warn: "amber", err: "red"};
+function healthHtml(h, nodeId) {
+  if (!h) return "";
+  const btn = a => a ? `<button type="button" class="btn sm${a.kind === "start" || a.kind === "install" ? " primary" : ""}" data-hact="${esc(a.kind)}" data-unit="${esc(a.unit || "")}" data-node="${esc(nodeId)}">${esc(a.label)}</button>` : "";
+  return `<div class="health ${esc(h.level)}" data-state="${esc(h.state)}" role="status">
+    <div class="row between" style="gap:8px"><b>${esc(h.title)}</b><span class="pill ${HEALTH_PILL[h.level] || "gray"}">${esc(h.state.replace(/_/g, " "))}</span></div>
+    <div class="small muted" style="margin-top:3px">${esc(h.detail || "")}</div>
+    ${h.action || h.secondary ? `<div class="row" style="gap:6px;margin-top:8px">${btn(h.action)}${btn(h.secondary)}</div>` : ""}</div>`;
+}
+async function startService(unit) {
+  if (unit === "dvmhost" && !await confirmDialog({title: "Start dvmhost?", body: "Starting dvmhost puts your station on the air on the configured frequencies. Make sure you are licensed for them.", ok: "Start dvmhost"})) return;
+  try {
+    const r = await api(`/api/service/${encodeURIComponent(unit)}/start`, {method: "POST"});
+    toast(`${unit} start: ${r.ok ? "ok" : "failed"}${r.dry_run ? " (dry-run)" : ""}`, r.ok ? "ok" : "err");
+  } catch (e) { toast(e.message, "err"); }
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-hact]"); if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  const node = b.dataset.node || "local", unit = b.dataset.unit;
+  const go = {install: "/setup#install", setup: "/setup", logs: `/logs?node=${encodeURIComponent(node)}&kind=${unit === "dvmfne" ? "fne" : "system"}`,
+              modem: `/node/${encodeURIComponent(node)}#modem`, node: `/node/${encodeURIComponent(node)}`}[b.dataset.hact];
+  if (go) location.href = go; else if (b.dataset.hact === "start") startService(unit);
+});

@@ -10,7 +10,8 @@ from .. import state
 from ..services import systemd
 from ..settings import settings
 from .base import DataSource, state_name
-from .dvmrest import DvmRest
+from . import health
+from .dvmrest import DvmRest, RestUnavailable
 from .logparse import log_paths, parse_activity, tail
 
 
@@ -40,12 +41,23 @@ class LiveSource(DataSource):
         self._host: DvmRest | None = None
         self._fne: DvmRest | None = None
 
+    def _client(self, cur: DvmRest | None, cfg: dict, kind: str, fallback_pw: str | None) -> DvmRest | None:
+        """REST client built from the config file on disk (the port/password dvmhost really uses), falling
+        back to the password we saved in state. Works the same on control and voice Pis."""
+        pw = cfg.get("password") or fallback_pw
+        if not pw:
+            return None
+        url = health.rest_url(cfg, kind)
+        if cur is None or cur.password != pw or cur.base != url:
+            cur = DvmRest(url, pw)
+        return cur
+
     def _clients(self):
         st = state.load()
-        if st.get("rest_password") and (self._host is None or self._host.password != st["rest_password"]):
-            self._host = DvmRest("http://127.0.0.1:9990", st["rest_password"])
-        if st.get("fne_rest_password") and (self._fne is None or self._fne.password != st["fne_rest_password"]):
-            self._fne = DvmRest("http://127.0.0.1:9991", st["fne_rest_password"])
+        self._host_cfg = health.read_rest(settings.dvm_etc, "host")
+        self._fne_cfg = health.read_rest(settings.dvm_etc, "fne")
+        self._host = self._client(self._host, self._host_cfg, "host", st.get("rest_password"))
+        self._fne = self._client(self._fne, self._fne_cfg, "fne", st.get("fne_rest_password"))
         return st
 
     def local(self) -> dict:
@@ -60,15 +72,16 @@ class LiveSource(DataSource):
         if role != "voice" and (w.get("network_mode") == "local_fne" or w.get("topology") == "trunked"):
             node["fne"] = systemd.status(settings.fne_unit)
         grants, affs = [], []
-        if node["host"]["active"] and self._host:
+        host_err: str | None = None if self._host else "no_password"
+        if node["host"]["active"] and self._host and not settings.dry_run:
             try:
                 s = self._host.get("/status")
                 node.update(mode=state_name(s.get("state")), tx=bool(s.get("tx")),
                             channelId=s.get("channelId"), channelNo=s.get("channelNo"),
                             nac=format(s["p25NAC"], "X") if "p25NAC" in s else None,
                             peerId=s.get("peerId"), lastSrcId=s.get("lastSrcId"), lastDstId=s.get("lastDstId"),
-                            modem={k: s.get("modem", {}).get(k) for k in
-                                   ("portType", "modemPort", "rxFrequency", "txFrequency", "protoVer")})
+                            # full read-only modem object from Host::getStatus() (Host.cpp)
+                            modem=dict(s.get("modem") or {}))
                 for ch in s.get("vcChannels", []):  # populated on a P25/DMR/NXDN control channel
                     if ch.get("lastDstId"):
                         grants.append({"node": node["name"], "channelNo": ch.get("channelNo"),
@@ -79,8 +92,24 @@ class LiveSource(DataSource):
                     if s.get(f"{proto}Enabled"):
                         affs += [dict(a, mode=proto.upper()) for a in
                                  self._host.get(f"/{proto}/report-affiliations").get("affiliations", [])]
-            except Exception as e:
-                node["error"] = f"REST: {e}"
+            except RestUnavailable as e:
+                host_err = e.kind  # shown as a calm state via node["health"], never as a raw error
+            except Exception as e:  # noqa: BLE001
+                host_err = "http"
+                node["health_raw"] = str(e)
+        node["health"] = {"host": health.classify("host", installed=settings.dvmhost_installed, svc=node["host"],
+                                                  rest_cfg=self._host_cfg, rest_error=host_err, dry_run=settings.dry_run)}
+        if node["fne"] is not None:
+            fne_err: str | None = None if self._fne else "no_password"
+            if node["fne"]["active"] and self._fne and not settings.dry_run:
+                try:
+                    self._fne.get("/version")
+                except RestUnavailable as e:
+                    fne_err = e.kind
+                except Exception:  # noqa: BLE001
+                    fne_err = "http"
+            node["health"]["fne"] = health.classify("fne", installed=settings.fne_installed, svc=node["fne"],
+                                                    rest_cfg=self._fne_cfg, rest_error=fne_err, dry_run=settings.dry_run)
         _, act = log_paths(settings.dvm_log_dir, "DVM")
         recent, talking = parse_activity(tail(act, 400), node["name"])
         if not node["host"]["active"]:
@@ -104,7 +133,13 @@ class LiveSource(DataSource):
                 recent += d.get("recent", [])
             except Exception as e:
                 nodes.append({"id": peer["name"], "name": peer["name"], "role": peer.get("role", "voice"),
-                              "reachable": False, "error": str(e), "host": {"active": False}, "mode": "Unreachable"})
+                              "reachable": False, "error": None, "health_raw": str(e), "host": {"active": False},
+                              "mode": "Unreachable",
+                              "health": {"host": {"unit": "Pi", "state": "unreachable", "level": "warn",
+                                                  "title": f"Can't reach {peer['name']}",
+                                                  "detail": "It didn't answer over the network (Tailscale). It may be "
+                                                            "powered off or offline — the dashboard keeps checking.",
+                                                  "action": None, "secondary": None}}})
         recent.sort(key=lambda e: e["ts"], reverse=True)
         return {"demo": False, "ts": time.time(), "nodes": nodes, "talking": talking, "grants": grants,
                 "affiliations": affs, "recent": recent[:100]}

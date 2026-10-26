@@ -17,7 +17,10 @@
 {% endblock %}
 {% block scripts %}
 <script>
-api("/api/snapshot").then(d => { $("#node").innerHTML = d.nodes.map(n => `<option value="${esc(n.id)}">${esc(n.name)}</option>`).join(""); load(); })
+const QS = new URLSearchParams(location.search);
+if (["system", "activity", "fne"].includes(QS.get("kind"))) $("#kind").value = QS.get("kind");
+api("/api/snapshot").then(d => { $("#node").innerHTML = d.nodes.map(n => `<option value="${esc(n.id)}">${esc(n.name)}</option>`).join("");
+  if (QS.get("node") && d.nodes.some(n => n.id === QS.get("node"))) $("#node").value = QS.get("node"); load(); })
   .catch(e => { $("#log").innerHTML = `<div class="errbox">${esc(e.message)}</div>`; $("#logState").className = "pill red"; $("#logState").textContent = "error"; });
 async function load() {
   if (!$("#node").value) return;

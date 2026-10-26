@@ -381,3 +381,11 @@ body{overflow-x:hidden}
 .main-col{min-width:0}
 #chans{overflow-x:auto}#chans td{white-space:nowrap}
 .wiz>*{min-width:0}
+table.ports tr.hat td{background:var(--accent-soft)}
+.portlist{margin-top:10px}
+.health{margin-top:10px;padding:10px 12px;border-radius:var(--r-sm);border:1px solid var(--line);background:color-mix(in srgb,var(--panel2) 70%,transparent)}
+.health.warn{border-color:color-mix(in srgb,var(--amber) 45%,transparent)}
+.health.err{border-color:color-mix(in srgb,var(--red) 45%,transparent)}
+.health.ok{display:none}
+.node-page .health.ok{display:block}
+.node>.health{margin:0 16px 16px}

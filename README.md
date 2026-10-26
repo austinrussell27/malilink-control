@@ -13,7 +13,7 @@ Raspberry Pi 5, without editing YAML by hand. Reach it from your phone over Tail
 
 ![dashboard](docs/screenshots/dashboard.png)
 
-## What it does (v0.5.0)
+## What it does (v0.5.1)
 
 | Area | Status |
 |---|---|
@@ -28,6 +28,53 @@ Raspberry Pi 5, without editing YAML by hand. Reach it from your phone over Tail
 | **DMR / NXDN** (new in 0.4.0) | ✅ generated + parsed with dvmhost's own YAML parser; dry-run tested; not yet tested on RF hardware |
 | Branding: Malinois Link logo in the sidebar, favicon, About and the setup welcome screen | ✅ |
 | **Modern UI** (new in 0.5.0): sidebar nav, dark/light theme, live on-the-air channel tiles, sortable/filterable tables, toasts, mobile layout | ✅ no frameworks, no CDN — works offline on the Pi |
+
+## What's new in 0.5.1 — modem port detection & calm service status
+
+**MMDVM hat / modem serial port** (read-only — the app never opens the port or sends anything to the modem):
+
+- **About → Modem** card and every **Pi page** show the *configured* port (from Setup, or the voice-channel join, plus
+  what `config.yml` on disk says), the **detected serial ports** (`/dev/ttyAMA*`, `/dev/ttyS*`, `/dev/ttyACM*`,
+  `/dev/ttyUSB*`, `/dev/serial0`, `/dev/serial1`, symlinks resolved, e.g. `serial0 → ttyAMA10`), whether each exists and
+  is readable/writable by the `dvmhost` user, and which one is the **likely hat port** for this Pi model.
+- **Setup → Modem → "Detect serial ports"** lists them; click **Use** to fill the port field.
+- **Live modem status** when dvmhost runs, read from dvmhost's `GET /status` `modem` object (port, speed, firmware
+  protocol, effective RX/TX frequency, RX level, DC offsets, …).
+- Demo mode and dry-run on a non-Pi machine show **sample data, labelled SAMPLE DATA**.
+
+Raspberry Pi UART facts used (from the official Raspberry Pi UART documentation):
+
+| Pi | MMDVM hat (GPIO 14/15) | Enable it |
+|---|---|---|
+| **Pi 5** | `/dev/ttyAMA0` (UART0). `/dev/ttyAMA10` / default `serial0` is the 3-pin *debug* header, not the hat | `dtparam=uart0` in `/boot/firmware/config.txt` (newer EEPROMs: `enable_uart=1` also moves `serial0` there) |
+| **Pi 4 / 3** | `/dev/ttyAMA0` with `dtoverlay=disable-bt` (or `miniuart-bt`); otherwise the mini UART `/dev/ttyS0` | `dtoverlay=disable-bt` + `sudo systemctl disable hciuart`, or `enable_uart=1` for the mini UART |
+
+On every model, turn off the serial **login console** on that UART (raspi-config → Interface Options → Serial Port:
+login shell *No*, hardware *Yes*; i.e. no `console=serial0,115200` in `cmdline.txt`) and reboot. The app reads
+`config.txt`/`cmdline.txt` and shows these hints when something is missing.
+
+**No more "REST: [Errno 111] Connection refused"** on the dashboard. Each Pi card shows one plain-language state
+with a matching button:
+
+| State | Meaning | Button |
+|---|---|---|
+| not installed | `dvmhost`/`dvmfne` binary missing | Install DVM |
+| not configured | no `config.yml` / `fne-config.yml` yet | Open Setup |
+| stopped / failed | installed but the service isn't running | Start dvmhost (same licence confirmation) · View logs |
+| starting | service just started; status API not up yet (dvmhost opens the **modem before** it starts its REST API) | — |
+| running but not answering | REST on 127.0.0.1:9990 (dvmfne: 9991) still refused after 25 s — usually the modem port is wrong | View logs · Check modem port |
+| status password doesn't match / live status off | REST password or `restEnable` in the file on disk differs | Open Setup (re-save) |
+| healthy | live status OK | — |
+
+The REST client now reads `restEnable/restAddress/restPort/restPassword` from the config files actually on disk
+(`config.yml` `network.*`, `fne-config.yml` `system.*`) — the values Setup/pairing write: REST enabled, bound to
+`127.0.0.1`, ports 9990/9991, the app's own passwords — so control and voice Pis use exactly what dvmhost was started
+with. Failed REST calls back off quietly (2 s → 30 s) with no error toasts. The client is still GET-only (nothing that
+can key the transmitter). In dry-run, simulated services show "simulated" instead of trying a REST API that can't exist.
+
+![modem detect](docs/screenshots/setup-modem-detect.png)
+![pi page modem](docs/screenshots/node-modem.png)
+![dashboard health](docs/screenshots/dashboard-health.png)
 
 ## What's new in 0.5.0 — UI redesign
 

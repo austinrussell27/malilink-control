@@ -163,7 +163,9 @@
       <div class="field"><label for="modem_port">Serial port</label><input id="modem_port" name="modem_port" list="ports" value="/dev/ttyUSB0" class="mono"><datalist id="ports"></datalist><div class="hint" id="portHint">Looking for serial ports…</div></div>
       <div class="field"><label for="modem_speed">Speed</label><input id="modem_speed" name="modem_speed" type="number" value="115200"><div class="hint">Leave at 115200 unless your modem firmware was changed.</div></div>
     </div>
-    <div class="notice small">Using the Pi's GPIO serial (<code>/dev/ttyAMA0</code>)? The DVMProject README says to disable Bluetooth and the serial console first — see the README for this app.</div>
+    <div class="row" style="gap:10px;margin:4px 0 4px"><button type="button" class="btn" id="detectPorts">Detect serial ports</button><span class="small muted">Lists the serial ports on this Pi and marks the likely MMDVM hat port. Click <b>Use</b> to fill the field.</span></div>
+    <div id="portList" class="portlist" aria-live="polite"></div>
+    <div class="notice small" style="margin-top:12px">MMDVM hat on the GPIO pins? <b>Pi 5:</b> the hat UART is <code>/dev/ttyAMA0</code> — add <code>dtparam=uart0</code> to <code>/boot/firmware/config.txt</code>. <b>Pi 4 / 3:</b> add <code>dtoverlay=disable-bt</code> (hat on <code>/dev/ttyAMA0</code>; otherwise the GPIO UART is the mini UART <code>/dev/ttyS0</code> with <code>enable_uart=1</code>). On both, turn off the serial login console (raspi-config → Interface Options → Serial Port: login shell <b>No</b>, hardware <b>Yes</b>) and reboot. USB boards show up as <code>/dev/ttyACM0</code> or <code>/dev/ttyUSB0</code>.</div>
   </section>
 
   <!-- 6 NETWORK -->

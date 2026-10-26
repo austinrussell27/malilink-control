@@ -22,6 +22,14 @@ TGS = {1: "Tactical", 2: "Ops", 9990: "Parrot", 100: "Events"}
 NXDN_NODES_STEP = 6250  # NXDN channels are 6.25 kHz apart
 
 
+def _demo_health(unit: str, up: bool, node_id: str) -> dict:
+    if up:
+        return {"unit": unit, "state": "healthy", "level": "ok", "title": f"{unit} running", "detail": "Live status OK (demo data).",
+                "action": None, "secondary": None}
+    return {"unit": unit, "state": "stopped", "level": "idle", "title": f"{unit} is not running",
+            "detail": "Demo: this simulated Pi is offline for a moment.", "action": None, "secondary": None}
+
+
 def demo_protocol() -> str:
     p = (os.environ.get("MALILINK_DEMO_PROTOCOL") or "").lower()
     if p in ("p25", "dmr", "nxdn"):
@@ -184,10 +192,12 @@ class DemoSource(DataSource):
                 "mode": (self.label if (c or n["role"] == "control") else "Idle") if up else "Offline",
                 "protocol": self.label, "site_label": self._site_label(),
                 "tx": bool(c) or n["role"] == "control",
-                "modem": {"portType": "uart", "modemPort": "/dev/ttyUSB0", "rxFrequency": rx,
-                          "txFrequency": tx, "protoVer": 4},
+                "modem": {"portType": "uart", "modemPort": "/dev/ttyAMA0", "portSpeed": 115200, "rxFrequency": rx,
+                          "txFrequency": tx, "rxFrequencyEffective": rx, "txFrequencyEffective": tx, "protoVer": 4,
+                          "rxLevel": 50.0, "rxDCOffset": 0, "txDCOffset": 0, "v24Connected": False} if up else {},
                 "channelId": 1, "channelNo": n["channelNo"], "nac": "293", "peerId": 100000 + n["channelNo"],
                 "lastSrcId": c["srcId"] if c else None, "lastDstId": c["dstId"] if c else None, "dry_run": True,
+                "health": {"host": _demo_health("dvmhost", up, n["id"])},
             })
         order = sorted(self.calls.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0))
         talking = [{"node": NODES[ch - 1]["name"], "channelNo": ch, "slot": slot, "mode": self.label,

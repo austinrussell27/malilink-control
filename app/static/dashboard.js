@@ -69,7 +69,8 @@
           <span>Modem</span><span class="mono small">${esc((n.modem && n.modem.modemPort) || "—")}</span>
           <span>Last call</span><span>${n.lastSrcId ? esc(n.lastSrcId) + " → TG " + esc(n.lastDstId) : "—"}</span></div>
         ${n.error ? `<div class="err">${esc(n.error)}</div>` : ""}
-        <div class="txbar ${n.tx && up ? "on" : ""}" title="${n.tx ? "transmitting" : "idle"}"></div></a></div>`;
+        <div class="txbar ${n.tx && up ? "on" : ""}" title="${n.tx ? "transmitting" : "idle"}"></div></a>
+        ${n.health ? healthHtml(n.health.host, n.id) + healthHtml(n.health.fne, n.id) : ""}</div>`;
     }).join("") || `<div class="empty">No Pis reported yet.</div>`;
     $("#grantCount").textContent = d.grants.length;
     $("#grants").innerHTML = d.grants.length ? `<table class="t" id="tGrants"><thead><tr><th data-sort>Channel</th><th data-sort>Talkgroup</th><th data-sort>Radio</th><th data-sort>Via</th></tr></thead><tbody>

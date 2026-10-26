@@ -259,8 +259,21 @@
   // init: serial ports + previous answers
   api("/api/serial-ports").then(r => {
     $("#ports").innerHTML = [...new Set([...r.ports, ...r.suggested])].map(p => `<option value="${esc(p)}">`).join("");
-    $("#portHint").textContent = r.ports.length ? `Found: ${r.ports.join(", ")}` : "No serial devices detected right now — plug in the modem, or type the port.";
-  });
+    const hat = r.detail && r.detail.likely_hat && !r.detail.sample ? ` · likely hat port: ${r.detail.likely_hat}` : "";
+    if (r.detail && r.detail.sample && !r.ports.length) { $("#portHint").textContent = "Sample data here (demo / non-Pi) — click Detect serial ports to see the list."; return; }
+    $("#portHint").textContent = (r.ports.length ? `Found: ${r.ports.join(", ")}` : "No serial devices detected right now — plug in the modem, or type the port.") + hat;
+  }).catch(() => { $("#portHint").textContent = "Could not list serial ports — type the port."; });
+  $("#detectPorts").onclick = async () => {
+    const el = $("#portList"); el.innerHTML = '<div class="skeleton" style="height:90px"></div>';
+    try {
+      const r = await api("/api/serial-ports");
+      el.innerHTML = renderPorts(r.detail, true);
+      $$("[data-pick]", el).forEach(b => b.onclick = () => {
+        $("#modem_port").value = b.dataset.pick; if ($("#modem_type").value !== "uart") $("#modem_type").value = "uart";
+        toast(`Modem port set to ${b.dataset.pick}`, "ok");
+      });
+    } catch (e) { el.innerHTML = `<div class="empty">Could not scan serial ports: ${esc(e.message)}</div>`; }
+  };
   api("/api/wizard/current").then(w => {
     if (!w || !w.system_name) return;
     for (const [k, v] of Object.entries(w)) { const el = $("#" + k); if (!el || v == null) continue; if (el.type === "checkbox") { if (k.startsWith("dmr_")) el.checked = !!v; } else el.value = v; }
@@ -308,5 +321,5 @@
   $("#jPreset").onclick = () => {
     $("#j_tx").value = localStorage.getItem("ml_prev_vc_mhz") || fmtF(chMHz(PREV.vc)); $("#j_peer").value = PREV.vc_peer_start;
   };
-  applyMode(); poll(); show(0);
+  applyMode(); poll(); show(location.hash === "#install" ? 1 : 0);
 })();

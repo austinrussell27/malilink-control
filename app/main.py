@@ -19,6 +19,7 @@ from . import __version__, mode, pairing, radios, state
 from .configgen import iden, ridacl
 from .configgen.generate import MODES, WizardInput, generate, write_files
 from .data import get_source
+from .hw import modem
 from .services import systemd
 from .services.installer import job as install_job
 from .settings import APP_DIR, settings
@@ -159,9 +160,18 @@ def api_info():
 
 @app.get("/api/serial-ports")
 def api_serial_ports():
-    pats = ["/dev/ttyUSB*", "/dev/ttyACM*", "/dev/ttyAMA*", "/dev/serial0", "/dev/serial/by-id/*"]
-    ports = sorted({p for pat in pats for p in glob.glob(pat)})
-    return {"ports": ports, "suggested": ["/dev/ttyUSB0", "/dev/ttyACM0", "/dev/ttyAMA0"]}
+    """Wizard Modem step. `ports` keeps the old flat list; `detail` is the full read-only scan."""
+    detail = modem.ports()
+    real = [p["path"] for p in detail.get("real_ports", detail["ports"]) if p["exists"]] if not settings.demo else []
+    byid = sorted(glob.glob("/dev/serial/by-id/*"))
+    return {"ports": sorted(set(real + byid)), "suggested": ["/dev/ttyAMA0", "/dev/ttyACM0", "/dev/ttyUSB0"],
+            "detail": detail}
+
+
+@app.get("/api/modem")
+def api_modem(node: str = "local"):
+    """Configured modem port, detected serial ports and read-only modem status (never transmits)."""
+    return modem.node_info(node)
 
 
 class FreqIn(BaseModel):
@@ -350,6 +360,12 @@ def api_local_snapshot(request: Request):
         return src.local()
     snap = src.snapshot()
     return {"node": snap["nodes"][0], "talking": [], "grants": [], "affiliations": [], "recent": []}
+
+
+@app.get("/api/local/modem")
+def api_local_modem(request: Request):
+    _cluster_ok(request)
+    return modem.local_info()
 
 
 @app.get("/api/local/logs")
