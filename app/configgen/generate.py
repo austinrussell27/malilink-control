@@ -64,6 +64,13 @@ class WizardInput(BaseModel):
     fne_port: int = 62031
     fne_password: str = ""
     peer_id: int = Field(default=100000, ge=1, le=999999999)
+    # dvmfne master.peerId (fne-config.example.yml key, default 9000100). None = keep template value.
+    fne_peer_id: Optional[int] = Field(default=None, ge=1, le=999999999)
+    # Trunked: network peer ID handed to the 1st/2nd/... paired voice channel (None = peer_id + channelNo).
+    vc_peer_start: Optional[int] = Field(default=None, ge=1, le=999999999)
+    # Optional: replace the Radios (RID) list + lockdown on apply (used by the "previous system" preset).
+    radios: Optional[list[dict]] = None
+    rid_lockdown: Optional[bool] = None
     talkgroups: list[Talkgroup] = Field(default_factory=lambda: [
         Talkgroup(tgid=1, name="Talkgroup 1", alias="Tactical"),
         Talkgroup(tgid=9990, name="Parrot", alias="Parrot/Testing", parrot=True),
@@ -270,8 +277,16 @@ def channel_for_freq(entry: iden.IdenEntry, tx_mhz: float) -> int:
     return ch
 
 
+def _rid_files(rid: Optional[dict]) -> tuple[str, bool]:
+    from . import ridacl
+    rid = rid or {}
+    radios = [ridacl.Radio(**r) for r in rid.get("radios") or []]
+    header = (settings.template_dir / "rid_acl.example.dat").read_text()
+    return ridacl.render(radios, header), bool(rid.get("lockdown"))
+
+
 def generate(w: WizardInput, existing_secrets: Optional[dict[str, str]] = None,
-             voice_channels: Optional[list[dict]] = None) -> Generated:
+             voice_channels: Optional[list[dict]] = None, rid: Optional[dict] = None) -> Generated:
     if w.mode != "p25":
         raise ValueError(f"{w.mode.upper()} is coming next - only P25 is supported in this version")
     trunked = w.topology == "trunked"
@@ -339,7 +354,10 @@ def generate(w: WizardInput, existing_secrets: Optional[dict[str, str]] = None,
     files["talkgroup_rules.yml"] = tg_text
     errors = [f"talkgroup_rules.yml: {e}" for e in tgmod.validate(tg_text, tdir / "talkgroup_rules.yaml_schema.json")
               if e != "schema not found; skipped"]
-    files["rid_acl.dat"] = (tdir / "rid_acl.example.dat").read_text()
+    # Radios page list (rid_acl.dat) + lockdown -> system.radio_id.acl (verified keys: file/time/acl)
+    files["rid_acl.dat"], lockdown = _rid_files(rid)
+    _set(h, "system.radio_id.acl", lockdown)
+    files["config.yml"] = _dump(h)
 
     if network_mode == "local_fne":
         f = _yaml().load((tdir / "fne-config.example.yml").read_text())
@@ -350,6 +368,8 @@ def generate(w: WizardInput, existing_secrets: Optional[dict[str, str]] = None,
         _set(f, "master.address", "0.0.0.0")  # so voice-channel Pis can peer over Tailscale
         _set(f, "master.port", w.fne_port)
         _set(f, "master.password", sec["fne_password"])
+        if w.fne_peer_id:
+            _set(f, "master.peerId", w.fne_peer_id)
         _set(f, "master.talkgroup_rules.file", str(etc / "talkgroup_rules.yml"))
         _set(f, "master.adj_site_map.file", str(etc / "adj_site_map.yml"))
         f["peers"] = CommentedSeq()  # no upstream FNE; HostFNE.cpp tolerates an empty list
@@ -426,9 +446,12 @@ def generate_voice_channel(bundle: dict, local: VoiceLocal, rest_password: Optio
     _set(h, "system.config.controlCh.notifyEnable", True)
     _voice_list(h, [{"channelId": entry.channel_id, "channelNo": format(ch, "X"), "rpcAddress": "127.0.0.1",
                      "rpcPort": RPC_PORT, "rpcPassword": bundle["rpc"]["password"]}])
+    # RIDs are managed on the control Pi and pushed here (bundle at join, /api/radios/sync afterwards).
+    rid_text, lockdown = _rid_files(bundle.get("rid"))
+    _set(h, "system.radio_id.acl", lockdown)
     files = {"config.yml": _dump(h), "iden_table.dat": bundle["iden_table"],
              "talkgroup_rules.yml": tgmod.build(tdir / "talkgroup_rules.example.yml", bundle["talkgroups"]),
-             "rid_acl.dat": (tdir / "rid_acl.example.dat").read_text()}
+             "rid_acl.dat": rid_text}
     warnings = []
     if not local.ack_terms:
         warnings.append("dvmhost will refuse to start until you accept the DVMProject terms (iAgreeNotToBeStupid).")

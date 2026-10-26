@@ -37,7 +37,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from . import state
+from . import radios, state
 from .configgen import iden
 from .configgen.generate import (RPC_PORT, VoiceLocal, WizardInput, channel_for_freq, channel_step, generate,
                                  generate_voice_channel, next_free_channel, write_files)
@@ -62,7 +62,7 @@ def apply_control_config(st: dict) -> dict:
     """Regenerate + write the control Pi's files with the current voice-channel list, then restart
     dvmhost if it is running. Returns {"written": [...], "restart": {...}|None}."""
     w = WizardInput(**st["wizard"])
-    g = generate(w, st.get("secrets"), st["pairing"]["voice_channels"])
+    g = generate(w, st.get("secrets"), st["pairing"]["voice_channels"], rid=radios.rid_bundle(st))
     written = write_files(g)
     restart = None
     try:
@@ -92,7 +92,8 @@ def list_vcs():
     st = state.load()
     out = []
     if _is_control(st):
-        g = generate(WizardInput(**st["wizard"]), st.get("secrets"), st["pairing"]["voice_channels"])
+        g = generate(WizardInput(**st["wizard"]), st.get("secrets"), st["pairing"]["voice_channels"],
+                     rid=radios.rid_bundle(st))
         e = g.plan.entry
         cc = {"name": settings.node_name + " (control)", "channelNo": g.plan.channel_no,
               "tx_mhz": g.plan.tx_hz / 1e6, "rx_mhz": g.plan.rx_hz / 1e6, "control": True}
@@ -110,6 +111,7 @@ class Claim(BaseModel):
     rpc_address: Optional[str] = None
     rpc_port: int = RPC_PORT
     requested_tx_mhz: Optional[float] = None
+    requested_peer_id: Optional[int] = None
 
 
 @router.post("/claim")
@@ -123,7 +125,7 @@ def claim(c: Claim, request: Request):
     if not entry or entry["expires"] < time.time():
         raise HTTPException(403, "Invalid or expired pairing code")
     w = WizardInput(**st["wizard"])
-    g = generate(w, st.get("secrets"), st["pairing"]["voice_channels"])
+    g = generate(w, st.get("secrets"), st["pairing"]["voice_channels"], rid=radios.rid_bundle(st))
     plan, sec = g.plan, g.secrets
     used = {plan.channel_no} | {v["channelNo"] for v in st["pairing"]["voice_channels"]}
     try:
@@ -140,10 +142,22 @@ def claim(c: Claim, request: Request):
     rpc_addr = c.rpc_address or (request.client.host if request.client else None)
     if not rpc_addr:
         raise HTTPException(400, "Could not determine the voice channel's address")
+    # network peer ID: explicit request > wizard vc_peer_start (+ n-th VC) > peer_id + channelNo
+    taken = {w.peer_id, w.fne_peer_id} | {v.get("peerId") for v in st["pairing"]["voice_channels"]}
+    if c.requested_peer_id:
+        peer_id = c.requested_peer_id
+    elif w.vc_peer_start:
+        peer_id = w.vc_peer_start
+        while peer_id in taken:
+            peer_id += 1
+    else:
+        peer_id = w.peer_id + ch
+    if peer_id in taken:
+        raise HTTPException(409, f"Peer ID {peer_id} is already used in this system")
     key = secrets.token_urlsafe(24)
     vc_url = c.url or f"http://{request.client.host if request.client else rpc_addr}:{c.app_port}"
     vc = {"name": c.name, "url": vc_url, "rpc_address": rpc_addr, "rpc_port": c.rpc_port,
-          "channelNo": ch, "paired_at": time.time()}
+          "channelNo": ch, "peerId": peer_id, "paired_at": time.time()}
     st["pairing"]["voice_channels"].append(vc)
     st["nodes"] = [n for n in st["nodes"] if n["name"] != c.name] + [
         {"name": c.name, "url": vc_url, "role": "voice", "chNo": ch, "key": key}]
@@ -162,7 +176,8 @@ def claim(c: Claim, request: Request):
         "talkgroups": [t.model_dump() for t in w.talkgroups],
         "rpc": {"address": cc_host, "port": RPC_PORT, "password": sec["rpc_password"]},
         "network": {"address": cc_host, "port": w.fne_port, "password": sec["fne_password"],
-                    "peerId": w.peer_id + ch},
+                    "peerId": peer_id},
+        "rid": radios.rid_bundle(st),
         "cluster_key": key,
         "control": {"name": settings.node_name, "restart": applied["restart"]},
     }
@@ -190,6 +205,7 @@ class Join(BaseModel):
     my_url: Optional[str] = None
     rpc_address: Optional[str] = None
     requested_tx_mhz: Optional[float] = None
+    requested_peer_id: Optional[int] = None
     modem_type: str = "uart"
     modem_port: str = "/dev/ttyUSB0"
     modem_speed: int = 115200
@@ -222,7 +238,8 @@ def join(j: Join, request: Request):
     if "://" not in control_url:
         control_url = "http://" + control_url
     body = {"code": j.code, "name": name, "url": j.my_url, "app_port": request.url.port or 8080,
-            "rpc_address": j.rpc_address, "requested_tx_mhz": j.requested_tx_mhz}
+            "rpc_address": j.rpc_address, "requested_tx_mhz": j.requested_tx_mhz,
+            "requested_peer_id": j.requested_peer_id}
     try:
         r = httpx.post(control_url + "/api/pairing/claim", json=body, timeout=15)
     except Exception as e:
@@ -248,6 +265,9 @@ def join(j: Join, request: Request):
     st["pairing"]["joined"] = {"summary": summary, "cluster_key": bundle["cluster_key"],
                                "ack_license": j.ack_license, "ack_terms": j.ack_terms,
                                "bundle": {k: v for k, v in bundle.items() if k not in ("rpc", "network")}}
+    rid = bundle.get("rid") or {}
+    st["radios"] = {"list": rid.get("radios") or [], "lockdown": bool(rid.get("lockdown")),
+                    "updated": time.time(), "synced_from_control": True}
     state.save(st)
     return {"ok": True, "written": written, "summary": summary, "warnings": g.warnings, "dry_run": settings.dry_run,
             "note": "Voice channel configured. Start dvmhost from the dashboard when you're ready to go on the air."}

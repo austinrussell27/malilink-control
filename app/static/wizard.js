@@ -3,7 +3,7 @@
   const choice = {mode: "p25", topology: "conventional", network_mode: "local_fne", purpose: "new"};
   let tgs = [{tgid: 1, name: "Talkgroup 1", alias: "Tactical", parrot: false},
              {tgid: 9990, name: "Parrot", alias: "Parrot/Testing", parrot: true}];
-  let preview = null, curFile = null;
+  let preview = null, curFile = null, presetRids = null;
 
   function show(n) {
     step = Math.max(0, Math.min(N - 1, n));
@@ -36,7 +36,7 @@
     choice[g.dataset.group] = c.dataset.val;
     if (g.dataset.group === "network_mode") $("#remoteFields").hidden = c.dataset.val !== "remote_fne";
     if (g.dataset.group === "topology") applyTopology();
-    if (g.dataset.group === "purpose") { $("#joinBox").hidden = c.dataset.val !== "voice"; show(0); }
+    if (g.dataset.group === "purpose") { $("#joinBox").hidden = c.dataset.val !== "voice"; $("#presetBox").hidden = c.dataset.val === "voice"; show(0); }
   }));
   function applyTopology() {
     const t = choice.topology === "trunked";
@@ -83,6 +83,8 @@
       nac: v("nac"), site_id: v("site_id"), wacn: v("wacn"), sys_id: v("sys_id"), rfss_id: v("rfss_id"),
       modem_type: v("modem_type"), modem_port: v("modem_port"), modem_speed: +v("modem_speed"),
       fne_address: v("fne_address"), fne_port: +v("fne_port"), fne_password: v("fne_password"), peer_id: +v("peer_id"),
+      fne_peer_id: +v("fne_peer_id") || null, vc_peer_start: +v("vc_peer_start") || null,
+      ...(presetRids ? {radios: presetRids.radios, rid_lockdown: presetRids.lockdown} : {}),
       talkgroups: tgs.filter(t => t.tgid),
       ack_license: $("#ack_license").checked, ack_terms: $("#ack_terms").checked,
     };
@@ -158,10 +160,37 @@
       const r = await api("/api/pairing/join", {method: "POST", body: {
         control_url: $("#j_control").value, code: $("#j_code").value, name: $("#j_name").value,
         modem_port: $("#j_port").value, requested_tx_mhz: +$("#j_tx").value || null,
+        requested_peer_id: +$("#j_peer").value || null,
         ack_license: $("#j_ack_license").checked, ack_terms: $("#j_ack_terms").checked}});
       const s = r.summary;
       $("#joinMsg").innerHTML = `<span style="color:var(--green)">Joined ${esc(s.system_name)} as channel ${esc(s.channelNo)} (TX ${s.tx_mhz.toFixed(5)} / RX ${s.rx_mhz.toFixed(5)} MHz)${r.dry_run ? " — dry-run" : ""}.</span> <a href="/dashboard">Open dashboard →</a>`;
     } catch (e) { $("#joinMsg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  };
+  // "Load my previous system values" (ML105). UNVERIFIED mapping notes:
+  //  - "System ID 105" is taken as written in config.yml (hex 0x105); NAC "105" decimal = 0x069.
+  //  - channel "2-385"/"2-457": iden row 2 = 450 MHz base, 6.25 kHz, +5 MHz (iden_table.example.dat);
+  //    dvmhost parses channelNo as hex, the user can pick decimal instead.
+  //  - console peer 900004 is not configured here (consoles connect to dvmfne with the hub password).
+  const PREV = {system_name: "ML105", callsign: "ML105", wacn: "A1055", sys_id: "105", nac: "069", rfss_id: "1", site_id: "1",
+                peer_id: 900002, fne_peer_id: 900001, vc_peer_start: 900003, cc: 0x385, vc: 0x457, ccDec: 385, vcDec: 457};
+  const chMHz = ch => 450 + ch * 0.00625;
+  const fmtF = f => f.toFixed(5);
+  $("#presetBtn").onclick = () => { $("#presetOpts").hidden = !$("#presetOpts").hidden; };
+  $("#presetGo").onclick = () => {
+    const dec = $('input[name="chfmt"]:checked').value === "dec";
+    const cc = dec ? PREV.ccDec : PREV.cc;
+    for (const k of ["system_name", "callsign", "wacn", "sys_id", "nac", "rfss_id", "site_id", "peer_id", "fne_peer_id", "vc_peer_start"]) $("#" + k).value = PREV[k];
+    $("#tx_mhz").value = fmtF(chMHz(cc)); $("#rx_mhz").value = fmtF(chMHz(cc) + 5);
+    choice.mode = "p25"; choice.topology = "trunked";
+    $$('[data-group="topology"] .choice').forEach(c => c.classList.toggle("sel", c.dataset.val === "trunked"));
+    applyTopology();
+    tgs = [{tgid: 101, name: "ML105 Main", alias: "ML105 Main", parrot: false}]; renderTgs();
+    presetRids = {radios: [{rid: 800001, alias: "", enabled: true}, {rid: 800002, alias: "", enabled: true}], lockdown: true};
+    localStorage.setItem("ml_prev_vc_mhz", fmtF(chMHz(dec ? PREV.vcDec : PREV.vc)));
+    $("#presetMsg").innerHTML = `<span style="color:var(--green)">Filled.</span> Control ${fmtF(chMHz(cc))} MHz. Radios 800001 & 800002 + lockdown will be saved with Setup. Console peer 900004 isn't set here — use it in your console app.`;
+  };
+  $("#jPreset").onclick = () => {
+    $("#j_tx").value = localStorage.getItem("ml_prev_vc_mhz") || fmtF(chMHz(PREV.vc)); $("#j_peer").value = PREV.vc_peer_start;
   };
   renderTgs(); poll(); show(0);
 })();

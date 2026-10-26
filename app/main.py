@@ -6,6 +6,7 @@ import base64
 import glob
 import json
 import secrets as pysecrets
+import time
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
@@ -13,8 +14,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ValidationError
 
-from . import __version__, pairing, state
-from .configgen import iden
+from . import __version__, pairing, radios, state
+from .configgen import iden, ridacl
 from .configgen.generate import WizardInput, generate, write_files
 from .data import get_source
 from .services import systemd
@@ -25,8 +26,9 @@ app = FastAPI(title="Malinois Link Control", version=__version__)
 app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=APP_DIR / "templates")
 app.include_router(pairing.router)
+app.include_router(radios.router)
 
-OPEN_PATHS = ("/static/", "/favicon.ico", "/api/local/", "/api/pairing/claim", "/healthz")
+OPEN_PATHS = ("/static/", "/favicon.ico", "/api/local/", "/api/pairing/claim", "/api/radios/sync", "/healthz")
 
 
 @app.middleware("http")
@@ -95,6 +97,11 @@ def page_trunking(request: Request):
     return templates.TemplateResponse(request, "trunking.html", ctx(request, "trunking"))
 
 
+@app.get("/radios", response_class=HTMLResponse)
+def page_radios(request: Request):
+    return templates.TemplateResponse(request, "radios.html", ctx(request, "radios"))
+
+
 @app.get("/about", response_class=HTMLResponse)
 def page_about(request: Request):
     return templates.TemplateResponse(request, "about.html", ctx(request, "about"))
@@ -149,13 +156,24 @@ def _validation_detail(e: ValidationError):
     return [{"field": ".".join(map(str, err["loc"])), "msg": err["msg"].removeprefix("Value error, ")} for err in e.errors()]
 
 
+def _wizard_rid(w: WizardInput, st: dict) -> dict:
+    """RID list for generated files: the wizard's preset list if given, else the Radios page list."""
+    cur = radios.rid_bundle(st)
+    if w.radios is not None:
+        cur["radios"] = [ridacl.Radio(**r).model_dump() for r in w.radios]
+    if w.rid_lockdown is not None:
+        cur["lockdown"] = w.rid_lockdown
+    return cur
+
+
 @app.post("/api/wizard/preview")
 async def api_preview(request: Request):
     body = await request.json()
     try:
         w = WizardInput(**body)
         st = state.load()
-        g = generate(w, st.get("secrets"), st["pairing"]["voice_channels"] if w.topology == "trunked" else None)
+        g = generate(w, st.get("secrets"), st["pairing"]["voice_channels"] if w.topology == "trunked" else None,
+                     rid=_wizard_rid(w, st))
     except ValidationError as e:
         raise HTTPException(422, _validation_detail(e))
     except ValueError as e:
@@ -178,15 +196,18 @@ async def api_apply(request: Request):
         raise HTTPException(409, "This Pi is paired as a voice channel. Unpair it on the control Pi first.")
     vcs = st["pairing"]["voice_channels"] if w.topology == "trunked" else None
     try:
-        g = generate(w, st.get("secrets"), vcs)
+        rid = _wizard_rid(w, st)
+        g = generate(w, st.get("secrets"), vcs, rid=rid)
     except ValueError as e:
         raise HTTPException(400, str(e))
     if g.errors:
         raise HTTPException(400, g.errors)
     written = write_files(g)
-    st.update(wizard=w.model_dump(), secrets=g.secrets, rest_password=g.secrets["rest_password"],
+    st.update(wizard=w.model_dump(exclude={"radios", "rid_lockdown"}), secrets=g.secrets, rest_password=g.secrets["rest_password"],
               fne_rest_password=g.secrets["fne_rest_password"] if (w.network_mode == "local_fne" or w.topology == "trunked") else None,
               setup_complete=True, role="control" if w.topology == "trunked" else "conventional")
+    st["radios"] = {**(st.get("radios") or {}), "list": rid["radios"], "lockdown": rid["lockdown"],
+                    "updated": time.time()}
     state.save(st)
     return {"ok": True, "written": written, "dry_run": settings.dry_run, "warnings": g.warnings}
 

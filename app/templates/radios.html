@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Radios · Malinois Link Control{% endblock %}
+{% block content %}
+<div class="page-head">
+  <img src="/static/ml-mark-96.png" alt="" class="page-mark">
+  <div><h1>Radios</h1>
+  <p class="sub">Radio IDs (RIDs) allowed or blocked on your system. Saved to dvmhost's <span class="mono">rid_acl.dat</span>
+    (also read by dvmfne on the hub Pi).</p></div>
+</div>
+
+<div id="voiceNote" class="notice small" hidden style="margin-bottom:14px"></div>
+
+<div class="grid g2 rid-top">
+  <div class="card lock-card" id="lockCard">
+    <div class="row between">
+      <div><h2 style="margin:0">Lockdown</h2>
+        <div class="muted small" id="lockText"></div></div>
+      <label class="switch" title="Lockdown"><input type="checkbox" id="lock"><span></span></label>
+    </div>
+    <div id="lockPending" class="notice small" hidden style="margin-top:12px"></div>
+  </div>
+  <div class="card">
+    <div class="row" style="gap:22px">
+      <div><div class="muted small">Radios</div><div class="big stat" id="cTotal">–</div></div>
+      <div><div class="muted small">Allowed</div><div class="big stat" style="color:var(--green)" id="cOn">–</div></div>
+      <div><div class="muted small">Blocked</div><div class="big stat" style="color:var(--red)" id="cOff">–</div></div>
+    </div>
+    <div class="muted small" id="fileInfo" style="margin-top:10px"></div>
+  </div>
+</div>
+
+<div class="card" style="margin-top:16px" id="editCard">
+  <h2 id="formTitle">Add a radio</h2>
+  <form id="f" class="rid-form" autocomplete="off">
+    <div class="field"><label for="rid">Radio ID</label><input id="rid" inputmode="numeric" required placeholder="800001"></div>
+    <div class="field"><label for="alias">Name / alias</label><input id="alias" maxlength="64" placeholder="ML105 Unit 1"></div>
+    <div class="field"><label for="en">Status</label><select id="en"><option value="1">Allowed</option><option value="0">Blocked</option></select></div>
+    <div class="field"><label for="ip">IP address <span class="muted small">(optional)</span></label><input id="ip" maxlength="45" placeholder="for P25 data, usually blank"></div>
+    <div class="field rid-btns"><button class="btn primary" id="save">Add radio</button>
+      <button type="button" class="btn" id="cancel" hidden>Cancel</button></div>
+  </form>
+  <div class="err" id="ferr"></div>
+</div>
+
+<div class="card" style="margin-top:16px">
+  <div class="row between" style="margin-bottom:10px">
+    <input id="q" placeholder="Search ID or name…" style="max-width:320px">
+    <div class="row">
+      <a class="btn" href="/api/radios/export.csv" id="exp">Export CSV</a>
+      <button class="btn" id="impBtn">Import CSV</button>
+      <a class="btn" href="/api/radios/rid_acl.dat" target="_blank">View rid_acl.dat</a>
+    </div>
+  </div>
+  <div id="imp" hidden class="card" style="background:var(--panel2);margin-bottom:12px">
+    <label for="impFile">CSV file <span class="muted small">(columns: rid, alias, enabled, ip — or paste rows / a rid_acl.dat)</span></label>
+    <input type="file" id="impFile" accept=".csv,.dat,.txt,text/csv">
+    <textarea id="impText" rows="5" class="mono" style="margin-top:8px" placeholder="rid,alias,enabled,ip&#10;800001,ML105 Unit 1,1,&#10;800002,ML105 Unit 2,1,"></textarea>
+    <div class="row" style="margin-top:8px">
+      <select id="impMode" style="max-width:260px"><option value="merge">Merge (add / update)</option><option value="replace">Replace whole list</option></select>
+      <button class="btn primary" id="impGo">Import</button>
+    </div>
+    <pre class="small muted mono" id="impOut"></pre>
+  </div>
+  <div style="overflow-x:auto"><table class="t" id="tbl">
+    <thead><tr><th>Radio ID</th><th>Name</th><th>Status</th><th class="hide-sm">IP</th><th></th></tr></thead>
+    <tbody></tbody></table></div>
+  <div class="empty" id="none" hidden>No radios yet.</div>
+</div>
+
+<details class="card" style="margin-top:16px"><summary style="cursor:pointer"><b>How DVM uses this list</b></summary>
+<ul class="muted small" style="margin-top:10px">
+  <li><b>Lockdown off</b> (<span class="mono">system.radio_id.acl: false</span>): every radio may talk except IDs listed here as <b>Blocked</b>.</li>
+  <li><b>Lockdown on</b> (<span class="mono">acl: true</span>): only IDs listed here as <b>Allowed</b> may talk/register — anything not on the list is refused.</li>
+  <li>dvmhost and dvmfne re-read <span class="mono">rid_acl.dat</span> every <span class="mono">system.radio_id.time</span> minutes, so list edits apply without a restart. Turning lockdown on/off changes <span class="mono">config.yml</span>, which dvmhost only reads at start-up, so it needs a restart.</li>
+  <li>On a trunked system the control Pi keeps the list and copies it to every voice-channel Pi automatically.</li>
+  <li>Format (from dvmhost's <span class="mono">rid_acl.example.dat</span>): <span class="mono">RID,Enabled(1/0),Alias,IP,</span> — commas aren't allowed in names.</li>
+</ul></details>
+{% endblock %}
+{% block scripts %}<script src="/static/radios.js?v={{ version }}"></script>{% endblock %}

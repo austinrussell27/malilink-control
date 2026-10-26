@@ -6,7 +6,8 @@ async function api(path, opts = {}) {
   const r = await fetch(path, {headers: {"Content-Type": "application/json"}, ...opts,
     body: opts.body && typeof opts.body !== "string" ? JSON.stringify(opts.body) : opts.body});
   let data = null; try { data = await r.json(); } catch (e) {}
-  if (!r.ok) { const d = data?.detail; throw new Error(Array.isArray(d) ? d.map(x => x.msg ? `${x.field}: ${x.msg}` : x).join("\n") : (d || r.statusText)); }
+  if (!r.ok) { const d = data?.detail; throw new Error(Array.isArray(d) ? d.map(x => x.msg ? `${x.field ?? (x.loc || []).slice(-1)[0]}: ${x.msg}` : x).join("\n")
+    : (d && typeof d === "object") ? [d.message, ...(d.errors || [])].filter(Boolean).join("\n") : (d || r.statusText)); }
   return data;
 }
 function fmtUptime(s) {

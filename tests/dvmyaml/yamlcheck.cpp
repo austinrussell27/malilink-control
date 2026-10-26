@@ -33,5 +33,8 @@ int main(int argc, char** argv) {
     std::printf("modem=%s %s cwid=%s identity=%s\n", c["system"]["modem"]["protocol"]["type"].as<std::string>().c_str(),
         c["system"]["modem"]["protocol"]["uart"]["port"].as<std::string>().c_str(), c["system"]["cwId"]["callsign"].as<std::string>().c_str(),
         c["system"]["identity"].as<std::string>().c_str());
+    // same reads as src/host/Host.cpp (Radio Id Lookups)
+    std::printf("radio_id file=%s time=%u acl=%d\n", c["system"]["radio_id"]["file"].as<std::string>().c_str(),
+        c["system"]["radio_id"]["time"].as<uint32_t>(0U), c["system"]["radio_id"]["acl"].as<bool>(false));
     return 0;
 }

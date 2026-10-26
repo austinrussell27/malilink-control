@@ -108,3 +108,25 @@ def test_pairing_flow(pis):
     # remove a VC -> CC config rewritten
     assert httpx.delete(f"{cc}/api/pairing/voice-channels/9").json()["ok"]
     assert [v["channelNo"] for v in y(ccd / "dryrun/etc/config.yml")["system"]["config"]["voiceChNo"]] == ["3"]
+
+    # Radios: control Pi is the source of truth; VCs got the list at join and get every change pushed
+    assert httpx.get(f"{vc}/api/radios").json()["managed_here"] is False
+    r = httpx.post(f"{cc}/api/radios/import", json={"csv": "800001,1,Alpha\n800002,1,Bravo\n", "mode": "replace"},
+                   timeout=20).json()
+    assert [p["ok"] for p in r["pushed"]] == [True]  # vc2 was removed above
+    r = httpx.post(f"{cc}/api/radios/lockdown", json={"enabled": True}, timeout=20).json()
+    assert r["lockdown"] and r["restart_pending"]  # CC dvmhost is running -> acl needs a restart
+    vtext = (vcd / "dryrun/etc/rid_acl.dat").read_text()
+    assert "800001,1,Alpha," in vtext and vtext == (ccd / "dryrun/etc/rid_acl.dat").read_text()
+    assert y(vcd / "dryrun/etc/config.yml")["system"]["radio_id"]["acl"] is True
+    assert y(ccd / "dryrun/etc/config.yml")["system"]["radio_id"]["acl"] is True
+    assert httpx.post(f"{vc}/api/radios", json={"rid": 5}).status_code == 409
+    assert httpx.post(f"{vc}/api/radios/sync", json={"radios": [], "lockdown": False}).status_code == 403
+    r = httpx.post(f"{cc}/api/radios/apply", json={"restart": True}, timeout=20).json()
+    assert r["restart"]["ok"] and not r["restart_pending"]
+    # regenerating the CC (pairing change) keeps the list + lockdown
+    code = httpx.post(f"{cc}/api/pairing/codes").json()["code"]
+    httpx.post(f"{vc2}/api/pairing/join", json={**join, "code": code, "name": "mali-vc2b"}, timeout=20)
+    assert "800002,1,Bravo," in (ccd / "dryrun/etc/rid_acl.dat").read_text()
+    assert y(ccd / "dryrun/etc/config.yml")["system"]["radio_id"]["acl"] is True
+    assert "800002,1,Bravo," in (vc2d / "dryrun/etc/rid_acl.dat").read_text()

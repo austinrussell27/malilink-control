@@ -22,6 +22,17 @@
           <div class="choice sel" data-val="new"><b>Set up a new system</b><span class="muted small">A conventional repeater/hotspot, or the <strong>control channel</strong> of a new trunked system.</span></div>
           <div class="choice" data-val="voice"><b>Add this Pi as a voice channel</b><span class="muted small">Join an existing trunked system with a pairing code from its control Pi.</span></div>
         </div>
+        <div class="preset" id="presetBox">
+          <div class="row between"><b>Rebuilding your old system?</b>
+            <button class="btn" type="button" id="presetBtn">Load my previous system values</button></div>
+          <div class="muted small">ML105: P25 trunked, WACN A1055, System 105, NAC 069, control 2-385, voice 2-457, TG 101, RIDs 800001/800002 with lockdown.</div>
+          <div id="presetOpts" hidden style="margin-top:10px">
+            <div class="small" style="margin-bottom:6px">dvmhost reads <span class="mono">channelNo</span> values in config.yml as <b>hex</b>. How were 385 / 457 written?</div>
+            <label class="check small"><input type="radio" name="chfmt" value="hex" checked> As in config.yml (hex): control <span class="mono">455.63125</span> / voice <span class="mono">456.94375</span> MHz</label>
+            <label class="check small"><input type="radio" name="chfmt" value="dec"> As decimal channel numbers: control <span class="mono">452.40625</span> / voice <span class="mono">452.85625</span> MHz</label>
+            <div class="row" style="margin-top:8px"><button class="btn primary" type="button" id="presetGo">Fill in the wizard</button><span id="presetMsg" class="small"></span></div>
+          </div>
+        </div>
       </div>
     </div>
     <div id="joinBox" class="card" style="margin-top:18px;background:var(--panel2)" hidden>
@@ -32,10 +43,12 @@
         <div class="field"><label for="j_code">Pairing code</label><input id="j_code" class="mono" placeholder="K7Q-4MD" style="text-transform:uppercase"></div>
         <div class="field"><label for="j_name">Name for this Pi</label><input id="j_name" value="{{ settings.node_name }}"></div>
         <div class="field"><label for="j_port">Modem serial port</label><input id="j_port" list="ports" value="/dev/ttyUSB0" class="mono"></div>
+        <div class="field"><label for="j_peer">Network peer ID (optional)</label><input id="j_peer" type="number" placeholder="assigned by the control Pi"></div>
         <div class="field"><label for="j_tx">Voice channel transmit frequency, MHz (optional)</label><input id="j_tx" type="number" step="0.00001" placeholder="leave blank for the next free channel"><div class="hint">Must be on the control channel's band plan; receive is set automatically from its offset.</div></div>
       </div>
       <label class="check"><input type="checkbox" id="j_ack_license"> I hold an appropriate license for this frequency and will identify as required.</label>
       <label class="check" style="margin-top:6px"><input type="checkbox" id="j_ack_terms"> I accept the DVMProject terms (personal, non-commercial, never public-safety).</label>
+      <div class="row" style="margin-top:12px"><button class="btn" type="button" id="jPreset">Use my previous voice channel (2-457, peer 900003)</button></div>
       <div class="row" style="margin-top:12px"><button class="btn primary" type="button" id="joinBtn">Join as voice channel</button><span id="joinMsg" class="small"></span></div>
     </div>
   </section>
@@ -137,8 +150,14 @@
       <div class="field"><label for="fne_address">Hub address</label><input id="fne_address" name="fne_address" value="127.0.0.1"></div>
       <div class="field"><label for="fne_port">Hub port</label><input id="fne_port" name="fne_port" type="number" value="62031"></div>
       <div class="field"><label for="fne_password">Hub password</label><input id="fne_password" name="fne_password" type="password"></div>
-      <div class="field"><label for="peer_id">Your peer ID</label><input id="peer_id" name="peer_id" type="number" value="100000"><div class="hint">The hub owner gives you this.</div></div>
     </div>
+    <details style="margin-top:14px" id="peerIds"><summary class="muted" style="cursor:pointer">Peer IDs (advanced)</summary>
+      <div class="grid g3" style="margin-top:12px">
+        <div class="field"><label for="peer_id">This Pi's peer ID</label><input id="peer_id" name="peer_id" type="number" value="100000"><div class="hint">dvmhost <span class="mono">network.id</span>. Joining someone else's hub? They give you this.</div></div>
+        <div class="field"><label for="fne_peer_id">Hub (FNE) peer ID</label><input id="fne_peer_id" name="fne_peer_id" type="number" placeholder="9000100 (default)"><div class="hint">dvmfne <span class="mono">master.peerId</span> when the hub runs here.</div></div>
+        <div class="field"><label for="vc_peer_start">First voice-channel peer ID</label><input id="vc_peer_start" name="vc_peer_start" type="number" placeholder="this peer ID + channel no."><div class="hint">Trunked: next voice channels count up from here.</div></div>
+      </div>
+    </details>
   </section>
 
   <!-- 7 TALKGROUPS -->

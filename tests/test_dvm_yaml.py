@@ -27,6 +27,16 @@ def test_conventional():
     out = check(generate(WizardInput(**W)).files["config.yml"])
     assert "control.enable=0 dedicated=0" in out and "channelNo=1 nac=293" in out
     assert "voiceChNo.size=1" in out and "iAgree=1" in out and "cwid=KD2ABC" in out
+    assert "time=2 acl=0" in out
+
+
+def test_previous_system_preset_lockdown():
+    w = WizardInput(system_name="ML105", callsign="ML105", topology="trunked", wacn="A1055", sys_id="105", nac="069",
+                    tx_mhz=455.63125, rx_mhz=460.63125, peer_id=900002, ack_license=True, ack_terms=True)
+    out = check(generate(w, None, [{"name": "vc1", "channelNo": 0x457, "rpc_address": "100.64.0.2"}],
+                         rid={"radios": [{"rid": 800001}, {"rid": 800002}], "lockdown": True}).files["config.yml"])
+    assert "channelId=2 channelNo=901 nac=69 sysId=105 netId=A1055" in out  # parsed as hex like dvmhost
+    assert "vc[0] id=2 no=1111" in out and "id=900002" in out and "time=2 acl=1" in out
 
 
 def test_control_and_voice():
