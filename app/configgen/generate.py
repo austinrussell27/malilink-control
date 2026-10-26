@@ -460,9 +460,11 @@ def generate_voice_channel(bundle: dict, local: VoiceLocal, rest_password: Optio
 
 
 def write_files(gen: Generated) -> list[str]:
-    """Write generated files to dvm_etc (backing up existing ones). Returns written paths."""
+    """Write generated files to dvm_etc (backing up existing ones). Returns written paths.
+    Real mode: /usr/local/etc (and the log dir) are created if dvmhost isn't installed yet."""
     etc = settings.dvm_etc
     etc.mkdir(parents=True, exist_ok=True)
+    settings.dvm_log_dir.mkdir(parents=True, exist_ok=True)
     written = []
     for name, text in gen.files.items():
         p = etc / name
@@ -473,8 +475,25 @@ def write_files(gen: Generated) -> list[str]:
     try:  # dvmhost runs as the 'dvmhost' user (linux/dvmhost.service)
         import pwd, os
         u = pwd.getpwnam("dvmhost")
-        for pth in written:
+        for pth in written + [str(settings.dvm_log_dir)]:
             os.chown(pth, u.pw_uid, u.pw_gid)
     except Exception:
         pass
+    _record_write(written)
     return written
+
+
+def _record_write(written: list[str]) -> None:
+    """Remember where/how configs were last written (dry-run configs must be re-written in real mode)."""
+    # separate file so callers holding a loaded state dict can't overwrite it on save
+    import json, time
+    (settings.data_dir / "config_written.json").write_text(json.dumps(
+        {"dry_run": settings.dry_run, "etc": str(settings.dvm_etc), "at": time.time(), "files": written}))
+
+
+def last_write() -> Optional[dict]:
+    import json
+    try:
+        return json.loads((settings.data_dir / "config_written.json").read_text())
+    except Exception:
+        return None

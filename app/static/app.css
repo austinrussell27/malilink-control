@@ -111,3 +111,11 @@ table.t tr.blocked td:first-child,table.t tr.blocked td:nth-child(2){color:var(-
   #tbl td:nth-child(3){grid-column:2;grid-row:1;text-align:right}
   #tbl td.acts{grid-column:1/-1;grid-row:3;text-align:left;margin-top:6px}#tbl td.acts .btn{margin:0 6px 0 0}}
 .preset{margin-top:14px;padding:12px 14px;border:1px solid #1d4370;border-radius:12px;background:linear-gradient(180deg,#0d1d31,#0a1424)}
+/* real / dry-run mode banner */
+.modebar{max-width:1200px;margin:10px auto 0;padding:9px 14px;border-radius:10px;font-size:13px;border:1px solid}
+.modebar code{font-size:12px}.modebar .btn{margin:0 6px}
+.modebar.dry{color:#cfe3ff;border-color:#1d4370;background:#0d1d31}
+.modebar.real{color:#bff3d4;border-color:#1d5a37;background:#0b1f15}
+.modebar.warn{color:#f3d9a8;border-color:#6b4a10;background:#1f170a}
+.modebar .warnc{color:var(--amber)}
+@media (max-width:1240px){.modebar{margin:10px 18px 0}}

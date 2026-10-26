@@ -17,7 +17,7 @@ cp "$DEST/systemd/malilink-control.service" /etc/systemd/system/
 # MALILINK_PORT=8080
 # MALILINK_PASSWORD=change-me # HTTP basic auth (user: admin)
 # MALILINK_DEMO=1             # simulated dashboard data
-# MALILINK_DRY_RUN=1          # never touch apt/systemctl/usr/local/etc
+# MALILINK_DRY_RUN=1          # never touch apt/systemctl/usr/local/etc (default on a Pi: real mode)
 ENV
 systemctl daemon-reload
 systemctl enable --now malilink-control

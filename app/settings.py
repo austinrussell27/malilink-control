@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -42,6 +43,8 @@ class Settings:
     # config files are written under var/dryrun/ instead of /usr/local/etc).
     demo: bool = _bool("MALILINK_DEMO", False)
     dry_run: bool = _bool("MALILINK_DRY_RUN", False)
+    # True when MALILINK_DRY_RUN is set at all (1 forces dry-run, 0 forces real mode).
+    dry_run_explicit: bool = os.environ.get("MALILINK_DRY_RUN") is not None
 
     # Optional single shared password for the web UI (HTTP Basic, user "admin").
     ui_password: str = os.environ.get("MALILINK_PASSWORD", "")
@@ -50,19 +53,46 @@ class Settings:
 
     def __post_init__(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        dvmhost_present = (self.dvm_bin / "dvmhost").exists() or shutil.which("dvmhost") is not None
-        has_systemctl = shutil.which("systemctl") is not None
-        # Auto dry-run when there is nothing real to drive (e.g. a laptop or this dev box).
-        if not self.dry_run and (not dvmhost_present or not has_systemctl) and not _bool("MALILINK_FORCE_REAL"):
+        self.dryrun_etc = self.data_dir / "dryrun" / "etc"
+        self.dryrun_log_dir = self.data_dir / "dryrun" / "log"
+        self.real_etc, self.real_log_dir = self.dvm_etc, self.dvm_log_dir
+        self.has_systemctl = shutil.which("systemctl") is not None
+        self.is_linux = sys.platform.startswith("linux")
+        # Auto dry-run ONLY when this machine can't drive services at all (no systemctl / not Linux,
+        # e.g. a laptop or CI). A real Pi without dvmhost installed yet is REAL mode: the Install DVM
+        # step runs for real and configs go to /usr/local/etc (created on first write).
+        self.auto_dry_run = False
+        self.demo_dry_run = False
+        if self.demo and not self.dry_run_explicit:
+            # demo = simulated system; never touch the real machine unless MALILINK_DRY_RUN=0 is given
+            self.demo_dry_run = True
+            self.dry_run = True
+        elif not self.dry_run_explicit and not _bool("MALILINK_FORCE_REAL") and not (self.has_systemctl and self.is_linux):
             self.auto_dry_run = True
             self.dry_run = True
-        else:
-            self.auto_dry_run = False
         if self.dry_run:
-            self.dvm_etc = self.data_dir / "dryrun" / "etc"
-            self.dvm_log_dir = self.data_dir / "dryrun" / "log"
+            self.dvm_etc = self.dryrun_etc
+            self.dvm_log_dir = self.dryrun_log_dir
             self.dvm_etc.mkdir(parents=True, exist_ok=True)
             self.dvm_log_dir.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def is_root(self) -> bool:
+        return hasattr(os, "geteuid") and os.geteuid() == 0
+
+    @property
+    def mode_reason(self) -> str:
+        if not self.dry_run:
+            return "real"
+        if self.demo_dry_run:
+            return "MALILINK_DEMO=1"
+        if self.auto_dry_run:
+            return "auto: systemctl not found" if self.is_linux else "auto: not a Linux host"
+        return "MALILINK_DRY_RUN=1"
+
+    @property
+    def fne_installed(self) -> bool:
+        return (self.dvm_bin / "dvmfne").exists() or shutil.which("dvmfne") is not None
 
     @property
     def dvmhost_installed(self) -> bool:

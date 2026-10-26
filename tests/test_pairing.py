@@ -109,6 +109,11 @@ def test_pairing_flow(pis):
     assert httpx.delete(f"{cc}/api/pairing/voice-channels/9").json()["ok"]
     assert [v["channelNo"] for v in y(ccd / "dryrun/etc/config.yml")["system"]["config"]["voiceChNo"]] == ["3"]
 
+    # voice Pi keeps what it needs to re-write its config later (e.g. paired while in dry-run)
+    vst = __import__("json").loads((vcd / "state.json").read_text())
+    assert vst["pairing"]["joined"]["bundle_full"]["rpc"]["password"] == rpc
+    assert vst["pairing"]["joined"]["local"]["modem_port"] == "/dev/ttyACM0"
+
     # Radios: control Pi is the source of truth; VCs got the list at join and get every change pushed
     assert httpx.get(f"{vc}/api/radios").json()["managed_here"] is False
     r = httpx.post(f"{cc}/api/radios/import", json={"csv": "800001,1,Alpha\n800002,1,Bravo\n", "mode": "replace"},

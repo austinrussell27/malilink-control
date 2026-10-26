@@ -13,11 +13,11 @@ Raspberry Pi 5, without editing YAML by hand. Reach it from your phone over Tail
 
 ![dashboard](docs/screenshots/dashboard.png)
 
-## What it does (v0.3)
+## What it does (v0.3.1)
 
 | Area | Status |
 |---|---|
-| **Install DVM** (wizard step 2, after Welcome): apt deps → clone → `cmake`/`make` → `make install` → `dvmhost` user → systemd units, as a background job with live progress | ✅ real (dry-run simulation when not on a Pi) |
+| **Install DVM** (wizard step 2, after Welcome): apt deps → clone → `cmake`/`make` → `make install` → `dvmhost` user → systemd units, as a background job with live progress | ✅ real on any Pi with systemd (simulated only in dry-run) |
 | **P25 conventional wizard** → `config.yml`, `iden_table.dat`, `talkgroup_rules.yml`, `fne-config.yml` generated from the repo's example files with ruamel.yaml (comments preserved), talkgroups validated against the repo JSON schema | ✅ real |
 | **Start/stop** dvmhost / dvmfne via systemd | ✅ real (simulated in dry-run) |
 | **Program your radio** page (RX/TX freq, NAC, talkgroups) | ✅ real |
@@ -61,9 +61,30 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 MALILINK_DEMO=1 .venv/bin/uvicorn app.main:app --port 8080     # http://localhost:8080
 .venv/bin/pip install pytest && .venv/bin/python -m pytest -q tests
 ```
-`MALILINK_DEMO=1` = simulated 3-Pi P25 site on the dashboard. **Dry-run** turns on automatically when
-`dvmhost`/`systemctl` aren't present (or set `MALILINK_DRY_RUN=1`): configs go to `var/dryrun/etc`,
-service actions and the installer are simulated.
+`MALILINK_DEMO=1` = simulated 3-Pi P25 site on the dashboard (implies dry-run unless `MALILINK_DRY_RUN=0`).
+
+### Real mode vs dry-run
+
+A bar under the header always says which one you're in (plus a **LIVE** / **DRY-RUN** pill).
+
+| Situation | Mode |
+|---|---|
+| Linux with `systemctl` (a real Pi) — **even if dvmhost isn't installed yet** | **REAL**: Install DVM runs apt/cmake/make for real, configs go to `/usr/local/etc` (created if missing), services via systemctl |
+| no `systemctl` / not Linux (laptop, container, CI) | dry-run automatically |
+| `MALILINK_DRY_RUN=1`, or `MALILINK_DEMO=1` | dry-run (configs → `var/dryrun/etc`, installer + services simulated) |
+| `MALILINK_DRY_RUN=0` (or `MALILINK_FORCE_REAL=1`) | real, no matter what |
+
+Real mode needs root (the systemd unit from `scripts/install-app.sh` runs as root). Running as a normal user shows
+a "Not running as root" warning, and Install DVM / config writes are refused with a clear message.
+
+Earlier versions (≤ 0.3.0) switched to dry-run on a fresh Pi just because dvmhost wasn't installed, so the
+installer did nothing and Setup/pairing configs went to `var/dryrun/etc`. After upgrading:
+* if `/usr/local/etc/config.yml` doesn't exist and the app runs as root, the saved setup (wizard answers,
+  paired voice channels, Radios list; voice Pis: their saved pairing bundle) is **re-written there automatically at start-up**;
+* otherwise a **Re-write needed** bar offers *Write configs to /usr/local/etc now* (`POST /api/mode/rewrite`,
+  existing files backed up as `*.bak`), or just run Setup again.
+dvmhost/dvmfne won't be started while dvmhost isn't installed or the config is still only in dry-run.
+`GET /api/mode` reports the mode, reason, root, installed binaries and last config write.
 
 ## Layout
 
@@ -75,12 +96,13 @@ app/
   services/             systemd.py (start/stop/status), installer.py (Install DVM background job)
   data/                 base.py (interface), live.py, demo.py, dvmrest.py (read-only REST client), logparse.py
   pairing.py            trunking pairing API (codes, claim, join, remove)
+  mode.py               real vs dry-run status, re-writing configs saved in dry-run
   radios.py             Radios page API (RID list, lockdown, CSV, sync to voice Pis); configgen/ridacl.py = file format
   templates/, static/   Jinja pages + vanilla JS/CSS (no build step)
 dvm_templates/          example configs + schema + dvmhost.service copied from dvmhost (SOURCE.txt = commit)
 systemd/                malilink-control.service, dvmfne.service
 scripts/                install-app.sh, refresh_templates.sh
-tests/                  test_smoke.py, test_radios.py, test_pairing.py (2-3 live app processes), test_dvm_yaml.py,
+tests/                  test_smoke.py, test_radios.py, test_mode.py, test_pairing.py (2-3 live app processes), test_dvm_yaml.py,
                         dvmyaml/ (dvmhost YAML parser checker), fake_dvmhost.py (fake REST server)
 docs/screenshots/       UI screenshots
 ```

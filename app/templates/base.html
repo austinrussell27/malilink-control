@@ -27,10 +27,33 @@
   </nav>
   <div class="badges">
     {% if settings.demo %}<span class="pill amber" title="Dashboard shows simulated data">DEMO DATA</span>{% endif %}
-    {% if settings.dry_run %}<span class="pill blue" title="Nothing on this machine is changed; configs go to {{ settings.dvm_etc }}">DRY-RUN</span>{% endif %}
+    {% if settings.dry_run %}<span class="pill blue" title="Nothing on this machine is changed; configs go to {{ settings.dvm_etc }}">DRY-RUN</span>{% else %}<span class="pill green" title="Real mode: writes {{ settings.dvm_etc }}, runs systemctl and the installer">LIVE</span>{% endif %}
   </div>
   <button class="menu-btn" onclick="document.body.classList.toggle('menu-open')" aria-label="Menu">☰</button>
 </header>
+{% if mode.dry_run %}
+<div class="modebar dry">
+  <b>DRY-RUN</b> ({{ mode.reason }}) — nothing on this machine is changed: the installer is simulated, services are simulated and configs are written to <code>{{ mode.etc }}</code>.
+  {% if mode.reason.startswith("auto") %}This happens when the machine has no systemd (not a real Pi).{% endif %}
+</div>
+{% else %}
+<div class="modebar real">
+  <b>REAL MODE</b> — Install DVM runs for real, configs are written to <code>{{ mode.etc }}</code> and services are controlled with systemctl.
+  {% if not mode.dvmhost_installed %}dvmhost is not installed yet — run <a href="/setup">Setup → Install DVM</a>.{% endif %}
+  {% if not mode.root %}<br><b class="warnc">Not running as root:</b> installing and writing <code>{{ mode.etc }}</code> will fail. Run <code>sudo ./scripts/install-app.sh</code> (systemd unit, runs as root) or start the app with sudo.{% endif %}
+</div>
+{% endif %}
+{% if mode.auto_rewrite and mode.auto_rewrite.ok %}
+<div class="modebar real">Your setup was saved earlier in dry-run mode, so it was re-written to <code>{{ mode.etc }}</code> automatically ({{ mode.auto_rewrite.written|length }} files).</div>
+{% endif %}
+{% if mode.needs_rewrite %}
+<div class="modebar warn" id="rewriteBar">
+  <b>Re-write needed:</b> your setup was saved while the app was in dry-run{% if mode.last_write %} (to <code>{{ mode.last_write.etc }}</code>){% endif %}, so dvmhost can't see it.
+  <button class="btn sm primary" id="rewriteBtn" type="button">Write configs to {{ mode.etc }} now</button>
+  <span class="small">Existing files are backed up as *.bak. Or run Setup again.</span> <span id="rewriteOut" class="small"></span>
+</div>
+<script>document.addEventListener("DOMContentLoaded",()=>{const b=document.getElementById("rewriteBtn");b.onclick=async()=>{b.disabled=true;try{const r=await api("/api/mode/rewrite",{method:"POST"});document.getElementById("rewriteOut").textContent=`Wrote ${r.written.length} files.`;setTimeout(()=>location.reload(),1200);}catch(e){document.getElementById("rewriteOut").textContent=e.message;b.disabled=false;}};});</script>
+{% endif %}
 <main class="wrap">
 {% block content %}{% endblock %}
 </main>

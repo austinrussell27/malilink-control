@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ValidationError
 
-from . import __version__, pairing, radios, state
+from . import __version__, mode, pairing, radios, state
 from .configgen import iden, ridacl
 from .configgen.generate import WizardInput, generate, write_files
 from .data import get_source
@@ -27,6 +27,18 @@ app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=APP_DIR / "templates")
 app.include_router(pairing.router)
 app.include_router(radios.router)
+
+@app.on_event("startup")
+def _startup():
+    mode.startup()
+
+
+@app.exception_handler(PermissionError)
+async def _perm(request: Request, exc: PermissionError):
+    return JSONResponse({"detail": f"Permission denied writing {getattr(exc, 'filename', '') or 'system files'}. "
+                                   "Malinois Link Control must run as root on the Pi (sudo scripts/install-app.sh "
+                                   "installs its systemd unit), or start it with sudo."}, 403)
+
 
 OPEN_PATHS = ("/static/", "/favicon.ico", "/api/local/", "/api/pairing/claim", "/api/radios/sync", "/healthz")
 
@@ -49,7 +61,8 @@ async def basic_auth(request: Request, call_next):
 
 def ctx(request: Request, page: str, **kw):
     st = state.load()
-    return {"request": request, "page": page, "settings": settings, "st": st, "version": __version__, **kw}
+    return {"request": request, "page": page, "settings": settings, "st": st, "version": __version__,
+            "mode": mode.status(st), **kw}
 
 
 # ----------------------------------------------------------------- pages
@@ -118,6 +131,21 @@ def healthz():
 
 
 # ----------------------------------------------------------------- API: info / helpers
+@app.get("/api/mode")
+def api_mode():
+    return mode.status()
+
+
+@app.post("/api/mode/rewrite")
+def api_mode_rewrite():
+    if settings.dry_run:
+        raise HTTPException(409, "Still in dry-run mode - nothing to re-write.")
+    r = mode.rewrite()
+    if not r.get("ok"):
+        raise HTTPException(400, r.get("error"))
+    return r
+
+
 @app.get("/api/info")
 def api_info():
     st = state.load()
@@ -235,6 +263,12 @@ def api_service(unit: str, verb: str):
             raise HTTPException(400, "Finish setup and confirm the licensing notice before starting.")
         if unit == settings.host_unit and st.get("role") == "control" and not st["pairing"]["voice_channels"]:
             raise HTTPException(400, "Pair at least one voice channel first - dvmhost will not start with an empty voice channel list.")
+        if not settings.dry_run:
+            if not (settings.dvmhost_installed if unit == settings.host_unit else settings.fne_installed):
+                raise HTTPException(409, f"{unit} isn't installed yet - run Setup -> Install DVM first.")
+            if mode.needs_rewrite(st):
+                raise HTTPException(409, "Your configuration was saved in dry-run mode. Re-write it to "
+                                         f"{settings.dvm_etc} first (banner at the top of the page).")
     try:
         return systemd.action(unit, verb)
     except ValueError:
@@ -249,6 +283,9 @@ def api_install_status(since: int = 0):
 
 @app.post("/api/install/start")
 def api_install_start(with_fne: bool = True):
+    if not install_job.dry_run and not settings.is_root:
+        raise HTTPException(403, "Installing DVM needs root (apt, make install, useradd, systemd units). "
+                                 "Run Malinois Link Control as root: sudo ./scripts/install-app.sh, or start it with sudo.")
     if not install_job.start(with_fne):
         raise HTTPException(409, "Install already running")
     return {"ok": True, "dry_run": install_job.dry_run}

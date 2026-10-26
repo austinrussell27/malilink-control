@@ -264,7 +264,10 @@ def join(j: Join, request: Request):
               secrets={**(st.get("secrets") or {}), "rest_password": g.secrets["rest_password"]})
     st["pairing"]["joined"] = {"summary": summary, "cluster_key": bundle["cluster_key"],
                                "ack_license": j.ack_license, "ack_terms": j.ack_terms,
-                               "bundle": {k: v for k, v in bundle.items() if k not in ("rpc", "network")}}
+                               "bundle": {k: v for k, v in bundle.items() if k not in ("rpc", "network")},
+                               # full bundle + local answers so configs can be re-written later
+                               # (e.g. paired while in dry-run); same file already holds our secrets
+                               "bundle_full": bundle, "local": local.model_dump()}
     rid = bundle.get("rid") or {}
     st["radios"] = {"list": rid.get("radios") or [], "lockdown": bool(rid.get("lockdown")),
                     "updated": time.time(), "synced_from_control": True}
