@@ -1,14 +1,17 @@
 {% extends "base.html" %}
 {% block title %}Setup · Malinois Link Control{% endblock %}
 {% block content %}
-<h1>Set up your radio system</h1>
-<p class="sub">A step-by-step guide. Nothing is written until the last step, and every value has a sensible default.</p>
+<div class="page-head"><div><h1>Set up your radio system</h1>
+<p class="sub">A step-by-step guide. Nothing is written until the last step, and every value has a sensible default.</p></div></div>
 <div class="wiz">
-  <ol class="steps" id="steps">
+  <div class="stepper">
+  <div class="wiz-prog" aria-hidden="true"><div class="lbl"><span>Step <b id="wizStepN">1</b> of 10</span><span id="wizStepL">Welcome</span></div><div class="bar"><i id="wizBar"></i></div></div>
+  <ol class="steps" id="steps" aria-label="Setup steps">
     {% for s in ["Welcome","Install DVM","System type","Name & callsign","Frequencies","System IDs","Modem","Network","Talkgroups","Review & save"] %}
-    <li data-step="{{ loop.index0 }}"><span class="n">{{ loop.index }}</span><span class="l">{{ s }}</span></li>
+    <li data-step="{{ loop.index0 }}" tabindex="0" role="button"><span class="n">{{ loop.index }}</span><span class="l">{{ s }}</span></li>
     {% endfor %}
   </ol>
+  </div>
   <form id="wiz" class="card" onsubmit="return false" novalidate>
 
   <!-- 0 WELCOME -->

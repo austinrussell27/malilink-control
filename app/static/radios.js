@@ -11,6 +11,7 @@ function render() {
     <td class="hide-sm mono muted">${esc(r.ip)}</td>
     <td class="acts">${ro ? "" : `<button class="btn sm" data-tog="${r.rid}">${r.enabled ? "Block" : "Allow"}</button>
       <button class="btn sm" data-ed="${r.rid}">Edit</button><button class="btn sm danger" data-del="${r.rid}" aria-label="Delete">✕</button>`}</td></tr>`).join("");
+  sortTable($("#tbl"));
   $("#none").hidden = rows.length > 0;
   $("#none").textContent = R.radios.length ? "No radios match your search." : "No radios yet — add one above or import a CSV.";
   const pn = $("#protoNote");
@@ -42,10 +43,9 @@ async function load() { R = await api("/api/radios"); render(); }
 function result(d, msg) {
   R = d; render();
   const bad = (d.pushed || []).filter(p => !p.ok);
-  if (bad.length) alert("Saved, but could not update voice channel(s): " + bad.map(b => b.node).join(", ") + ". They will get the list on the next change.");
-  if (msg) toast(msg);
+  if (bad.length) toast("Saved, but could not update voice channel(s): " + bad.map(b => b.node).join(", ") + ". They will get the list on the next change.", "warn", 6000);
+  if (msg) toast(msg, "ok");
 }
-function toast(m) { const t = document.createElement("div"); t.className = "toast"; t.textContent = m; document.body.appendChild(t); setTimeout(() => t.remove(), 2600); }
 
 function resetForm() {
   editing = null; $("#f").reset(); $("#formTitle").textContent = "Add a radio"; $("#save").textContent = "Add radio";
@@ -67,7 +67,7 @@ $("#tbl").onclick = async (e) => {
   const b = e.target.closest("button"); if (!b) return;
   try {
     if (b.dataset.del) {
-      if (!confirm(`Delete radio ${b.dataset.del}?`)) return;
+      if (!await confirmDialog({title: `Delete radio ${b.dataset.del}?`, body: "It is removed from rid_acl.dat.", ok: "Delete", danger: true})) return;
       result(await api(`/api/radios/${b.dataset.del}`, {method: "DELETE"}), `Deleted ${b.dataset.del}`);
     } else if (b.dataset.tog) {
       const r = R.radios.find(x => x.rid == b.dataset.tog);
@@ -78,23 +78,23 @@ $("#tbl").onclick = async (e) => {
       $("#formTitle").textContent = `Edit radio ${r.rid}`; $("#save").textContent = "Save"; $("#cancel").hidden = false;
       $("#editCard").scrollIntoView({behavior: "smooth", block: "center"}); $("#alias").focus();
     }
-  } catch (err) { alert(err.message); }
+  } catch (err) { toast(err.message, "err"); }
 };
 $("#lock").onchange = async (e) => {
   const on = e.target.checked;
-  if (on && !confirm("Turn lockdown ON? Only radios listed as Allowed will be able to use the system.")) { e.target.checked = false; return; }
+  if (on && !await confirmDialog({title: "Turn lockdown on?", body: "Only radios listed as Allowed will be able to use the system.", ok: "Turn on lockdown"})) { e.target.checked = false; return; }
   try { result(await api("/api/radios/lockdown", {method: "POST", body: {enabled: on}}), `Lockdown ${on ? "on" : "off"}`); }
-  catch (err) { e.target.checked = !on; alert(err.message); }
+  catch (err) { e.target.checked = !on; toast(err.message, "err"); }
 };
 async function doApply() {
-  try { result(await api("/api/radios/apply", {method: "POST", body: {restart: true}}), "dvmhost restarted"); } catch (err) { alert(err.message); }
+  try { result(await api("/api/radios/apply", {method: "POST", body: {restart: true}}), "dvmhost restarted"); } catch (err) { toast(err.message, "err"); }
 }
 $("#impBtn").onclick = () => { $("#imp").hidden = !$("#imp").hidden; };
 $("#impFile").onchange = async (e) => { const f = e.target.files[0]; if (f) $("#impText").value = await f.text(); };
 $("#impGo").onclick = async () => {
   const csv = $("#impText").value; if (!csv.trim()) { $("#impOut").textContent = "Choose a file or paste rows first."; return; }
   const mode = $("#impMode").value;
-  if (mode === "replace" && !confirm("Replace the whole radio list with this file?")) return;
+  if (mode === "replace" && !await confirmDialog({title: "Replace the whole radio list?", body: "Every radio not in this file is removed.", ok: "Replace list", danger: true})) return;
   try {
     const d = await api("/api/radios/import", {method: "POST", body: {csv, mode}});
     $("#impOut").textContent = `Imported ${d.imported} radio(s).` + (d.errors.length ? `\nSkipped:\n${d.errors.join("\n")}` : "");

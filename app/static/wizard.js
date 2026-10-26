@@ -19,7 +19,10 @@
   function show(n) {
     step = Math.max(0, Math.min(N - 1, n));
     $$(".panel").forEach(p => p.classList.toggle("on", +p.dataset.step === step));
-    $$("#steps li").forEach(li => { const i = +li.dataset.step; li.classList.toggle("on", i === step); li.classList.toggle("done", i < step); });
+    $$("#steps li").forEach(li => { const i = +li.dataset.step; li.classList.toggle("on", i === step); li.classList.toggle("done", i < step);
+      if (i === step) { li.setAttribute("aria-current", "step"); const ul = li.parentElement; if (ul.scrollWidth > ul.clientWidth) ul.scrollTo({left: li.offsetLeft - ul.offsetLeft - (ul.clientWidth - li.offsetWidth) / 2, behavior: "smooth"}); } else li.removeAttribute("aria-current"); });
+    $("#wizStepN").textContent = step + 1; $("#wizStepL").textContent = $(`#steps li[data-step="${step}"] .l`).textContent;
+    $("#wizBar").style.width = `${((step + 1) / N) * 100}%`;
     $("#back").disabled = step === 0;
     $("#next").style.visibility = step === N - 1 ? "hidden" : "visible";
     if (step === 9) doPreview();
@@ -27,7 +30,8 @@
     $("#next").hidden = step === 0 && choice.purpose === "voice";
     window.scrollTo({top: 0, behavior: "smooth"});
   }
-  $$("#steps li").forEach(li => li.onclick = () => show(+li.dataset.step));
+  $$("#steps li").forEach(li => { li.onclick = () => show(+li.dataset.step);
+    li.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); show(+li.dataset.step); } }; });
   $("#back").onclick = () => show(step - 1);
   $("#next").onclick = () => { if (validateStep()) show(step + 1); };
 
@@ -105,6 +109,14 @@
     if (g.dataset.group === "mode") { applyMode(); calc(); }
     if (g.dataset.group === "purpose") { $("#joinBox").hidden = c.dataset.val !== "voice"; $("#presetBox").hidden = c.dataset.val === "voice"; show(0); }
   }));
+  // keyboard access for the choice cards (radio-group semantics)
+  $$(".choices").forEach(g => { g.setAttribute("role", "radiogroup"); $$(".choice", g).forEach(c => {
+    c.setAttribute("role", "radio"); c.tabIndex = c.classList.contains("off") ? -1 : 0;
+    c.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); c.click(); } };
+  }); });
+  const syncAria = () => $$(".choice").forEach(c => c.setAttribute("aria-checked", c.classList.contains("sel")));
+  document.addEventListener("click", e => { if (e.target.closest(".choice")) setTimeout(syncAria); });
+  setTimeout(syncAria, 300);
   function applyTopology() {
     const t = choice.topology === "trunked";
     $("#ccTag").hidden = !t; $("#trunkNet").hidden = !t;
@@ -198,13 +210,15 @@
     try {
       const r = await api("/api/wizard/apply", {method: "POST", body: payload()});
       $("#saveMsg").textContent = `Saved ${r.written.length} files${r.dry_run ? " (dry-run)" : ""}.`;
+      toast(`Configuration saved — ${r.written.length} files${r.dry_run ? " (dry-run)" : ""}`, "ok");
       $("#afterSave").hidden = false; $("#fneStart").hidden = choice.network_mode !== "local_fne";
       $("#pairLink").hidden = choice.topology !== "trunked";
-    } catch (e) { $("#saveMsg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+    } catch (e) { $("#saveMsg").innerHTML = `<span class="err">${esc(e.message)}</span>`; toast(e.message, "err"); }
   };
   $$("[data-svc]").forEach(b => b.onclick = async () => {
     try { const r = await api(`/api/service/${b.dataset.svc}/${b.dataset.verb}`, {method: "POST"});
       $("#svcOut").textContent += `${r.cmd}: ${r.ok ? "ok" : "failed"}${r.dry_run ? " (dry-run)" : ""}\n${r.output || ""}`;
+      toast(`${b.dataset.svc} ${b.dataset.verb}: ${r.ok ? "ok" : "failed"}${r.dry_run ? " (dry-run)" : ""}`, r.ok ? "ok" : "err");
     } catch (e) { $("#svcOut").textContent += e.message + "\n"; }
   });
 
@@ -239,7 +253,7 @@
   };
   $("#instBtn").onclick = async () => {
     try { await api(`/api/install/start?with_fne=${$("#instFne").checked}&clean_src=${$("#instClean").checked}`, {method: "POST"}); since = 0; if (!polling) { polling = true; poll(); } }
-    catch (e) { alert(e.message); }
+    catch (e) { toast(e.message, "err"); }
   };
 
   // init: serial ports + previous answers
@@ -265,7 +279,8 @@
         ack_license: $("#j_ack_license").checked, ack_terms: $("#j_ack_terms").checked}});
       const s = r.summary;
       $("#joinMsg").innerHTML = `<span style="color:var(--green)">Joined ${esc(s.system_name)} as channel ${esc(s.channelNo)} (TX ${s.tx_mhz.toFixed(5)} / RX ${s.rx_mhz.toFixed(5)} MHz)${r.dry_run ? " — dry-run" : ""}.</span> <a href="/dashboard">Open dashboard →</a>`;
-    } catch (e) { $("#joinMsg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+      toast(`Joined ${s.system_name} as channel ${s.channelNo}`, "ok");
+    } catch (e) { $("#joinMsg").innerHTML = `<span class="err">${esc(e.message)}</span>`; toast(e.message, "err"); }
   };
   // "Load my previous system values" (ML105). UNVERIFIED mapping notes:
   //  - "System ID 105" is taken as written in config.yml (hex 0x105); NAC "105" decimal = 0x069.

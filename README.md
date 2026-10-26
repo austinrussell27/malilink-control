@@ -13,7 +13,7 @@ Raspberry Pi 5, without editing YAML by hand. Reach it from your phone over Tail
 
 ![dashboard](docs/screenshots/dashboard.png)
 
-## What it does (v0.4.0)
+## What it does (v0.5.0)
 
 | Area | Status |
 |---|---|
@@ -26,7 +26,39 @@ Raspberry Pi 5, without editing YAML by hand. Reach it from your phone over Tail
 | **Radios page** (RID manager): add / edit / delete radio IDs with a name, Allowed/Blocked, search, CSV import/export, **Lockdown** toggle → writes dvmhost's real `rid_acl.dat` + `system.radio_id.acl` | ✅ real; trunked: control Pi pushes the list to every voice Pi |
 | **"Load my previous system values"** preset on the Setup welcome screen (ML105 trunked system) | ✅ fills the wizard (see mapping below) |
 | **DMR / NXDN** (new in 0.4.0) | ✅ generated + parsed with dvmhost's own YAML parser; dry-run tested; not yet tested on RF hardware |
-| Branding: Malinois Link logo in header, favicon, About and the setup welcome screen | ✅ |
+| Branding: Malinois Link logo in the sidebar, favicon, About and the setup welcome screen | ✅ |
+| **Modern UI** (new in 0.5.0): sidebar nav, dark/light theme, live on-the-air channel tiles, sortable/filterable tables, toasts, mobile layout | ✅ no frameworks, no CDN — works offline on the Pi |
+
+## What's new in 0.5.0 — UI redesign
+
+A full visual refresh with **no behaviour, API or config-generation changes**. Still plain CSS + vanilla JS,
+no build step and no CDN calls (Pis may be offline).
+
+- **Design system**: CSS-variable tokens in the logo's blue/silver palette, refined dark theme plus an optional
+  **light theme** (toggle in the top bar, remembered per browser), consistent cards, pills, buttons and spacing.
+- **Navigation**: left sidebar with icons, mode pills and version; becomes a slide-in drawer on phones.
+  The **DRY-RUN / REAL MODE / DEMO** banners and pills and the licensing notice stay visible on every page.
+- **Dashboard**: KPI strip, **"On the air now"** tiles per channel (TS1/TS2 slots for DMR) with a live glow,
+  per-Pi cards, and sortable/filterable grants, affiliations and recent-activity tables.
+- **Setup wizard**: stepper with "Step N of 10" progress bar, done ticks, keyboard-selectable choice cards;
+  horizontal stepper on mobile.
+- **Toasts and dialogs** instead of browser `alert`/`confirm` (unpair, delete, lockdown, start dvmhost).
+- **Accessibility**: skip link, visible focus rings, `aria-current`/`aria-sort`, keyboard nav, reduced-motion support.
+- Empty, loading (skeleton) and error states everywhere.
+
+| Desktop | Mobile |
+|---|---|
+| ![dashboard](docs/screenshots/dashboard.png) | ![mobile dashboard](docs/screenshots/mobile-dashboard.png) |
+| ![setup](docs/screenshots/setup-review.png) | ![mobile setup](docs/screenshots/mobile-setup-review.png) |
+| ![radios](docs/screenshots/radios.png) | ![mobile radios](docs/screenshots/mobile-radios.png) |
+| ![program](docs/screenshots/program-trunked.png) | ![mobile program](docs/screenshots/mobile-program-trunked.png) |
+| ![logs](docs/screenshots/logs.png) | ![mobile logs](docs/screenshots/mobile-logs.png) |
+| ![trunking](docs/screenshots/trunking.png) | ![mobile trunking](docs/screenshots/mobile-trunking.png) |
+| ![about](docs/screenshots/about.png) | ![mobile about](docs/screenshots/mobile-about.png) |
+| ![light theme](docs/screenshots/dashboard-light.png) | ![mobile light](docs/screenshots/mobile-dashboard-light.png) |
+
+Other screenshots: `node.png`, `setup-welcome.png`, `program.png` (conventional), `voice-pi-trunking.png`,
+`real-mode-banner.png`, `program-light.png`, `setup-light.png`, and the DMR/NXDN ones below.
 
 ## Install on the Pi (Raspberry Pi OS Lite, Debian trixie, arm64)
 

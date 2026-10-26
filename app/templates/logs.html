@@ -1,24 +1,35 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Logs · Malinois Link Control{% endblock %}
 {% block content %}
-<h1>Live logs</h1><p class="sub">Tails the dvmhost / dvmfne log files on each Pi.</p>
-<div class="card"><div class="row" style="margin-bottom:10px">
-  <select id="node" style="width:auto"></select>
-  <select id="kind" style="width:auto"><option value="system">System log</option><option value="activity">Activity (calls)</option><option value="fne">Network hub (dvmfne)</option></select>
-  <input id="filter" placeholder="Filter (e.g. 3101001 or TG 1)" style="max-width:260px">
-  <label class="check" style="margin:0"><input type="checkbox" id="follow" checked> follow</label></div>
-  <div class="log mono" id="log" style="height:60vh"></div></div>
+<div class="page-head"><div><h1>Live logs</h1><p class="sub">Tails the dvmhost / dvmfne log files on each Pi.</p></div>
+  <div class="actions"><span class="pill gray" id="logState" role="status">loading…</span></div></div>
+<div class="card">
+  <div class="logbar">
+    <label class="sr" for="node">Pi</label><select id="node" aria-label="Pi"></select>
+    <label class="sr" for="kind">Log</label><select id="kind" aria-label="Log file"><option value="system">System log</option><option value="activity">Activity (calls)</option><option value="fne">Network hub (dvmfne)</option></select>
+    <div class="search">{{ icon("search","ico sm") }}<input id="filter" placeholder="Filter (e.g. 3101001 or TG 1)" aria-label="Filter log lines"></div>
+    <label class="check" style="margin:0 0 0 auto"><input type="checkbox" id="follow" checked> Follow</label>
+  </div>
+  <div class="log mono" id="log" style="height:62vh" tabindex="0" aria-label="Log output"><div class="skeleton" style="height:100%"></div></div>
+  <div class="logfoot"><span id="logCount"></span><span>Refreshes every 2 s · colours: <span style="color:var(--red)">error</span> · <span style="color:var(--amber)">warning</span> · <span style="color:var(--blue)">info</span></span></div>
+</div>
 {% endblock %}
 {% block scripts %}
 <script>
-api("/api/snapshot").then(d => { $("#node").innerHTML = d.nodes.map(n => `<option value="${esc(n.id)}">${esc(n.name)}</option>`).join(""); load(); });
+api("/api/snapshot").then(d => { $("#node").innerHTML = d.nodes.map(n => `<option value="${esc(n.id)}">${esc(n.name)}</option>`).join(""); load(); })
+  .catch(e => { $("#log").innerHTML = `<div class="errbox">${esc(e.message)}</div>`; $("#logState").className = "pill red"; $("#logState").textContent = "error"; });
 async function load() {
   if (!$("#node").value) return;
-  const r = await api(`/api/logs/${encodeURIComponent($("#node").value)}?kind=${$("#kind").value}&lines=500`);
-  const f = $("#filter").value.toLowerCase();
-  const lines = f ? r.lines.filter(l => l.toLowerCase().includes(f)) : r.lines;
-  $("#log").innerHTML = lines.length ? lines.map(colorLog).join("") : '<span class="muted">No log lines.</span>';
-  if ($("#follow").checked) $("#log").scrollTop = 1e9;
+  try {
+    const r = await api(`/api/logs/${encodeURIComponent($("#node").value)}?kind=${$("#kind").value}&lines=500`);
+    const f = $("#filter").value.toLowerCase();
+    const lines = f ? r.lines.filter(l => l.toLowerCase().includes(f)) : r.lines;
+    $("#log").innerHTML = lines.length ? lines.map(colorLog).join("") : `<div class="empty" style="margin:20px">${f ? "No lines match the filter." : "No log lines yet."}</div>`;
+    $("#logCount").textContent = `${lines.length}${f ? " of " + r.lines.length : ""} lines`;
+    $("#logState").className = "pill green"; $("#logState").innerHTML = '<span class="live-dot"></span>live';
+    if ($("#follow").checked) $("#log").scrollTop = 1e9;
+  } catch (e) { $("#logState").className = "pill red"; $("#logState").textContent = "offline"; }
 }
 $("#node").onchange = $("#kind").onchange = $("#filter").oninput = load; setInterval(load, 2000);
 </script>

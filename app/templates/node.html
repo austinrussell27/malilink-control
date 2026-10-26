@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% block title %}{{ node_id }} · Malinois Link Control{% endblock %}
 {% block content %}
-<a href="/dashboard" class="muted small">← Dashboard</a>
-<div class="row between"><h1 id="nname">{{ node_id }}</h1><div class="row" id="svcBtns"></div></div>
+<a href="/dashboard" class="muted small" style="text-decoration:none">← Dashboard</a>
+<div class="page-head" style="margin-top:6px"><div><h1 id="nname">{{ node_id }}</h1><p class="sub">Service status, modem and live log for this Pi.</p></div><div class="actions" id="svcBtns"></div></div>
 <div class="grid g3" style="margin:14px 0">
   <div class="card"><h3>dvmhost service</h3><div class="big" id="hs">—</div><div class="muted small" id="hu"></div></div>
   <div class="card"><h3>Modem / mode</h3><div class="big" id="mode">—</div><div class="muted small" id="modem"></div></div>
   <div class="card"><h3>Channel</h3><div class="big" id="ch">—</div><div class="muted small" id="freq"></div></div>
 </div>
-<div class="card"><div class="row between"><h2>Live log</h2>
+<div class="card"><div class="row between" style="margin-bottom:10px"><h2 style="margin:0">Live log</h2>
   <div class="row"><select id="kind" style="width:auto"><option value="system">System log</option><option value="activity">Activity (calls)</option><option value="fne">Network hub (dvmfne)</option></select>
   <label class="check" style="margin:0"><input type="checkbox" id="follow" checked> follow</label></div></div>
   <div class="log mono" id="log"></div></div>
@@ -32,9 +32,10 @@ async function refresh() {
     ["start","restart","stop"].map(v => `<button class="btn ${v==="stop"?"danger":""}" onclick="svc('dvmhost','${v}')">${v[0].toUpperCase()+v.slice(1)} dvmhost</button>`).join("");
 }
 async function svc(u, v) {
-  if (v !== "start" || confirm("Starting dvmhost puts your station on the air on the configured frequencies. Continue?")) {
-    try { const r = await api(`/api/service/${u}/${v}`, {method: "POST"}); $("#svcOut").textContent = `${r.cmd}: ${r.ok ? "ok" : "failed"}${r.dry_run ? " (dry-run)" : ""}\n${r.output||""}`; }
-    catch (e) { $("#svcOut").textContent = e.message; } refresh(); }
+  if (v !== "start" || await confirmDialog({title: "Start dvmhost?", body: "Starting dvmhost puts your station on the air on the configured frequencies. Make sure you are licensed for them.", ok: "Start dvmhost"})) {
+    try { const r = await api(`/api/service/${u}/${v}`, {method: "POST"}); $("#svcOut").textContent = `${r.cmd}: ${r.ok ? "ok" : "failed"}${r.dry_run ? " (dry-run)" : ""}\n${r.output||""}`;
+      toast(`${u} ${v}: ${r.ok ? "ok" : "failed"}${r.dry_run ? " (dry-run)" : ""}`, r.ok ? "ok" : "err"); }
+    catch (e) { $("#svcOut").textContent = e.message; toast(e.message, "err"); } refresh(); }
 }
 async function logs() {
   const r = await api(`/api/logs/${encodeURIComponent(NODE)}?kind=${$("#kind").value}&lines=300`);

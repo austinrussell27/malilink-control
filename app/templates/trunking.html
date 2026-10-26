@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Trunking · Malinois Link Control{% endblock %}
 {% block content %}
-<h1>Trunking & voice channels</h1>
-<p class="sub">One Pi runs the <b>control channel</b> and the network hub; every extra Pi joins as a <b>voice channel</b> with a short pairing code over Tailscale. The control Pi assigns the channel number, writes its voice-channel list and restarts dvmhost.</p>
+<div class="page-head"><div><h1>Trunking &amp; voice channels</h1>
+<p class="sub">One Pi runs the <b>control channel</b> and the network hub; every extra Pi joins as a <b>voice channel</b> with a short pairing code over Tailscale. The control Pi assigns the channel number, writes its voice-channel list and restarts dvmhost.</p></div></div>
 {% set role = st.role %}
 {% if role == "control" %}
 <div class="grid g2">
@@ -10,7 +10,7 @@
     <ol class="muted small"><li>Install Malinois Link Control on the new Pi and open its <b>Setup</b>.</li>
       <li>Choose <b>Add this Pi as a voice channel</b>.</li><li>Enter this Pi's address and the code below (valid 10 minutes, single use).</li></ol>
     <button class="btn primary" id="mk">Create pairing code</button>
-    <div class="big mono" id="code" style="margin-top:12px;font-size:34px;letter-spacing:.1em"></div>
+    <div class="pair-code mono" id="code" aria-live="polite"></div>
     <div class="muted small" id="codeHint"></div>
   </div>
   <div class="card"><h2>Channels in this system</h2>
@@ -49,18 +49,19 @@ Voice:   protocols.p25.control.enable=false; authoritative=false, supervisor=fal
 <script>
 async function load() {
   const r = await api("/api/pairing/voice-channels");
-  if ($("#chans")) $("#chans").innerHTML = `<table class="t"><tr><th>Pi</th><th>Ch</th><th>TX / RX MHz</th><th>RPC</th><th></th></tr>${r.channels.map(c => `<tr>
+  if ($("#chans")) $("#chans").innerHTML = `<table class="t" id="tChans"><thead><tr><th data-sort>Pi</th><th data-sort>Ch</th><th>TX / RX MHz</th><th>RPC</th><th><span class="sr">Actions</span></th></tr></thead><tbody>${r.channels.map(c => `<tr>
       <td>${esc(c.name)} ${c.control ? '<span class="pill blue">CC</span>' : ''}</td><td>${esc(c.channelNo)}</td>
       <td class="mono small">${c.tx_mhz.toFixed(5)} / ${c.rx_mhz.toFixed(5)}</td><td class="small">${c.control ? "" : esc(c.rpc_address) + ":" + esc(c.rpc_port)}</td>
-      <td>${c.control ? "" : `<button class="btn danger sm" onclick='unpairVc(${c.channelNo}, ${JSON.stringify(c.name)})'>Remove / unpair</button>`}</td></tr>`).join("")}</table>
+      <td class="acts">${c.control ? "" : `<button class="btn danger sm" onclick='unpairVc(${c.channelNo}, ${JSON.stringify(c.name)})'>Remove / unpair</button>`}</td></tr>`).join("")}</tbody></table>
       ${r.voice_channels.length ? "" : '<div class="empty" style="margin-top:8px">No voice channels yet — dvmhost on the control channel needs at least one.</div>'}`;
+  sortTable($("#tChans"));
   if ($("#joined") && r.joined) { const j = r.joined; $("#joined").innerHTML = `<table class="t">
       <tr><td class="muted">System</td><td>${esc(j.system_name)}</td></tr><tr><td class="muted">Control Pi</td><td>${esc(j.control_url)} (${esc(j.control_ip)})</td></tr>
       <tr><td class="muted">Channel</td><td>${esc(j.channelNo)}</td></tr><tr><td class="muted">TX / RX</td><td class="mono">${j.tx_mhz.toFixed(5)} / ${j.rx_mhz.toFixed(5)} MHz</td></tr></table>`; }
 }
 if ($("#mk")) $("#mk").onclick = async () => { try { const r = await api("/api/pairing/codes", {method: "POST"});
-  $("#code").textContent = r.code; $("#codeHint").textContent = `Expires at ${new Date(r.expires * 1000).toLocaleTimeString()}. Control Pi address: ${location.origin}`; }
-  catch (e) { $("#code").innerHTML = `<span class="err" style="font-size:14px">${esc(e.message)}</span>`; } };
+  $("#code").textContent = r.code; toast("Pairing code created", "ok"); $("#codeHint").textContent = `Expires at ${new Date(r.expires * 1000).toLocaleTimeString()}. Control Pi address: ${location.origin}`; }
+  catch (e) { $("#code").innerHTML = `<span class="err" style="font-size:14px">${esc(e.message)}</span>`; toast(e.message, "err"); } };
 load(); setInterval(load, 5000);
 </script>
 {% endblock %}

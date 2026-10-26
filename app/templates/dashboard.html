@@ -1,21 +1,35 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Dashboard · Malinois Link Control{% endblock %}
 {% block content %}
-<div class="row between"><div><h1>System dashboard</h1><p class="sub" id="sub">Connecting…</p></div>
-<span class="pill gray" id="live">● live</span></div>
+<div class="page-head">
+  <div><h1>System dashboard</h1><p class="sub" id="sub">Connecting…</p></div>
+  <div class="actions"><span class="pill gray" id="live" role="status">● connecting</span></div>
+</div>
 {% set unpair_place = "dashboard" %}{% include "_unpair.html" %}
 {% if settings.demo %}<div class="notice small" style="margin-bottom:16px">You are looking at <b>simulated demo data</b> (a 3-Pi trunked site; protocol from <code>MALILINK_DEMO_PROTOCOL</code> or your Setup choice). Start the app without <code>MALILINK_DEMO=1</code> to see your real system.</div>{% endif %}
 
-<h3>On the air now</h3>
-<div id="talking" style="margin-bottom:22px"><div class="empty">Quiet — nobody is talking.</div></div>
-
-<h3>Pis</h3>
-<div class="grid nodes" id="nodes" style="margin-bottom:22px"></div>
-
-<div class="grid g2">
-  <div class="card"><h2>Channel grants</h2><div id="grants"></div></div>
-  <div class="card"><h2>Affiliations <span class="muted small">(radio → talkgroup)</span></h2><div id="affs" style="max-height:300px;overflow:auto"></div></div>
+<div class="kpis" id="kpis" aria-label="System summary">
+  {% for k in range(5) %}<div class="kpi skeleton" style="min-height:70px"></div>{% endfor %}
 </div>
-<div class="card" style="margin-top:16px"><h2>Recent activity</h2><div id="recent" style="max-height:420px;overflow:auto"></div></div>
+
+<div class="section-title"><h3>On the air now</h3><span class="rule"></span><span class="muted small" id="airCount"></span></div>
+<div class="chans" id="talking" aria-live="polite"><div class="chan skeleton"></div><div class="chan skeleton"></div><div class="chan skeleton"></div></div>
+
+<div class="section-title"><h3>Pis</h3><span class="rule"></span></div>
+<div class="grid nodes" id="nodes"><div class="card skeleton" style="min-height:190px"></div><div class="card skeleton" style="min-height:190px"></div></div>
+
+<div class="grid g2" style="margin-top:22px">
+  <div class="card"><div class="card-head"><h2>{{ icon("grant") }}Channel grants</h2><span class="count" id="grantCount">0</span></div><div id="grants" class="panel-scroll"></div></div>
+  <div class="card"><div class="card-head"><h2>{{ icon("users") }}Affiliations <span class="muted small" style="font-weight:500">radio → talkgroup</span></h2><span class="count" id="affCount">0</span></div>
+    <div class="search" style="margin-bottom:10px">{{ icon("search","ico sm") }}<input id="affQ" placeholder="Filter radio or TG…" aria-label="Filter affiliations"></div>
+    <div id="affs" class="panel-scroll"></div></div>
+</div>
+<div class="card" style="margin-top:16px">
+  <div class="card-head"><h2>{{ icon("clock") }}Recent activity</h2><span class="count" id="recentCount">0</span></div>
+  <div class="tbl-tools"><div class="search">{{ icon("search","ico sm") }}<input id="recentQ" placeholder="Filter by radio, TG, Pi or event…" aria-label="Filter recent activity"></div>
+    <select id="recentKind" style="width:auto" aria-label="Event type"><option value="">All events</option><option value="call">Calls</option><option value="grant">Grants</option><option value="rejected">Rejections</option></select></div>
+  <div id="recent" class="panel-scroll" style="max-height:440px"></div>
+</div>
 {% endblock %}
 {% block scripts %}<script src="/static/dashboard.js?v={{ version }}"></script>{% endblock %}
