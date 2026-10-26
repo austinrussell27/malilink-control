@@ -119,3 +119,4 @@ table.t tr.blocked td:first-child,table.t tr.blocked td:nth-child(2){color:var(-
 .modebar.warn{color:#f3d9a8;border-color:#6b4a10;background:#1f170a}
 .modebar .warnc{color:var(--amber)}
 @media (max-width:1240px){.modebar{margin:10px 18px 0}}
+.fne-only{background:var(--panel2);margin:0 0 14px}.chips{gap:6px}

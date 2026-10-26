@@ -63,6 +63,15 @@
       <label class="check" style="margin:0"><input type="checkbox" id="instFne" checked> also install the dvmfne service</label>
       <label class="check" style="margin:0" title="git clean -fdx: deletes every untracked/ignored file in the dvmhost source folder before building"><input type="checkbox" id="instClean"> clean source checkout (<span class="mono">git clean -fdx</span>) — use if a build keeps failing</label>
     </div>
+    <div class="card fne-only">
+      <div class="row between">
+        <div><b>Install dvmfne service only</b>
+          <div class="muted small">Forgot the dvmfne box? This adds just the network hub service. It never rebuilds dvmhost or touches your configs; if the dvmfne program is missing it builds only that, from the existing build.</div></div>
+        <button class="btn" id="fneBtn" type="button">Install dvmfne service only</button>
+      </div>
+      <div class="row chips" id="pieces" style="margin-top:10px"></div>
+      <div class="small" id="fneMsg"></div>
+    </div>
     <ul class="progress" id="instSteps"></ul>
     <div class="hint" id="instPaths"></div>
     <div class="log mono" id="instLog"><span class="muted">Install output will stream here.</span></div>

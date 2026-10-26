@@ -114,6 +114,59 @@ cp {src}/linux/dvmhost.service /lib/systemd/system/dvmhost.service
     return s
 
 
+FNE_STEPS = [
+    ("fne_check", "Check what is already installed"),
+    ("fne_build", "Build & install the dvmfne binary (only if missing)"),
+    ("fne_user", "dvmhost user & log dir (if missing)"),
+    ("fne_units", "Install & enable the dvmfne service"),
+]
+# where systemd units can live (repo's README copies to /lib/systemd/system); overridable for tests
+UNIT_DIRS = [Path("/lib/systemd/system"), Path("/etc/systemd/system")]
+DRY_DELAY = 0.25  # seconds between simulated output lines
+
+
+def fne_only_script() -> str:
+    """Install ONLY the dvmfne service. Never configures/rebuilds dvmhost, never runs `make install`
+    (that would reinstall dvmhost + example configs), never touches /usr/local/etc.
+    dvmfne target + build/dvmfne location verified: src/CMakeLists.txt add_executable(dvmfne),
+    CMakeLists.txt include(src/CMakeLists.txt) + CMAKE_RUNTIME_OUTPUT_DIRECTORY "." -> <build>/dvmfne,
+    install(TARGETS dvmfne DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)."""
+    if len(settings.src_dir.resolve().parts) < 3:
+        raise ValueError(f"refusing to use {settings.src_dir}: choose a deeper MALILINK_SRC_DIR")
+    b = shlex.quote(str(settings.src_dir / "build"))
+    binp = shlex.quote(str(settings.dvm_bin / "dvmfne"))
+    logd = shlex.quote(str(settings.dvm_log_dir))
+    unit = shlex.quote(str(ROOT_DIR / "systemd" / "dvmfne.service"))
+    udir = shlex.quote(str(UNIT_DIRS[0]))
+    return f"""set -euo pipefail
+echo "##STEP fne_check"
+if [ -x {binp} ]; then echo "dvmfne binary already installed: {binp} - not rebuilding"; NEED_BUILD=0
+elif [ -f {b}/Makefile ]; then echo "dvmfne binary missing; build tree found at {b}"; NEED_BUILD=1
+else echo "ERROR: no dvmfne binary and no build tree at {b}. Run 'Install / update DVM' first."; exit 3; fi
+echo "##STEP fne_build"
+if [ "$NEED_BUILD" = 1 ]; then
+  make -C {b} -j"$(( $(nproc) > 3 ? 3 : $(nproc) ))" dvmfne
+  strip -s {b}/dvmfne || true
+  install -m 0755 {b}/dvmfne {binp}
+  echo "installed {binp}"
+else
+  echo "skipped (already installed)"
+fi
+echo "##STEP fne_user"
+if id dvmhost >/dev/null 2>&1; then echo "user dvmhost exists"; else
+  useradd --user-group -M --system dvmhost --shell /bin/false; usermod --groups dialout --append dvmhost; echo "created user dvmhost"; fi
+mkdir -p {logd}
+chown dvmhost:dvmhost {logd}
+echo "##STEP fne_units"
+mkdir -p {udir}
+cp {unit} {udir}/dvmfne.service
+systemctl daemon-reload
+systemctl enable dvmfne
+echo "dvmfne.service installed and enabled (not started - start it from the dashboard once fne-config.yml exists)"
+echo '##DONE'
+"""
+
+
 DRY_OUTPUT = {
     "deps": ["Hit:1 http://deb.debian.org/debian trixie InRelease", "Reading package lists... Done",
              "libasio-dev is already the newest version.", "0 upgraded, 0 newly installed."],
@@ -126,7 +179,14 @@ DRY_OUTPUT = {
                 "-- Installing: /usr/local/etc/config.example.yml"],
     "user": ["(dvmhost user created / already exists)"],
     "units": ["installed dvmhost.service, dvmfne.service", "systemctl daemon-reload"],
+    "fne_check": ["dvmfne binary already installed: /usr/local/bin/dvmfne - not rebuilding"],
+    "fne_build": ["skipped (already installed)"],
+    "fne_user": ["user dvmhost exists"],
+    "fne_units": ["Created symlink /etc/systemd/system/multi-user.target.wants/dvmfne.service",
+                  "dvmfne.service installed and enabled (not started)"],
 }
+DRY_FNE_BUILD = ["dvmfne binary missing; build tree found", "[100%] Built target dvmfne",
+                 "installed /usr/local/bin/dvmfne"]
 
 
 def subprocess_env() -> dict:
@@ -163,12 +223,33 @@ class InstallJob:
         self.dry_run = settings.dry_run
         self.proc: subprocess.Popen | None = None
         self.clean_src = False
+        self.kind = "full"  # full | fne
+        self.sim = {"dvmhost_bin": False, "dvmfne_bin": False, "dvmfne_unit": False, "build_tree": False}
         self._recover()
+
+    def steps(self) -> list:
+        return FNE_STEPS if self.kind == "fne" else STEPS
+
+    def pieces(self) -> dict:
+        """What's installed (status chips). Dry-run reports the simulated state."""
+        if self.dry_run:
+            return dict(self.sim)
+        return {"dvmhost_bin": settings.dvmhost_installed, "dvmfne_bin": settings.fne_installed,
+                "dvmfne_unit": any((d / "dvmfne.service").exists() for d in UNIT_DIRS),
+                "build_tree": (settings.src_dir / "build" / "Makefile").exists()}
+
+    def fne_only_blocker(self) -> str | None:
+        p = self.pieces()
+        if not p["dvmfne_bin"] and not p["build_tree"]:
+            return (f"dvmfne isn't built yet and there is no build tree at {settings.src_dir / 'build'}. "
+                    "Run 'Install / update DVM' first (it builds dvmhost and dvmfne together).")
+        return None
 
     def _save_state(self) -> None:
         try:
             STATE_FILE.write_text(json.dumps({"state": self.state, "step": self.step, "started": self.started,
-                                              "finished": self.finished, "pid": os.getpid()}))
+                                              "finished": self.finished, "kind": self.kind,
+                                              "pid": os.getpid()}))
         except Exception:
             pass
 
@@ -181,7 +262,8 @@ class InstallJob:
             return
         if prev.get("state") == "running":
             self.state, self.started, self.finished = "failed", prev.get("started"), time.time()
-            step = dict(STEPS).get(prev.get("step") or "", prev.get("step") or "?")
+            step = dict(STEPS + FNE_STEPS).get(prev.get("step") or "", prev.get("step") or "?")
+            self.kind = prev.get("kind", "full")
             self.lines = [f"Previous install was interrupted during: {step} (the app was restarted or stopped).",
                           "Run Install / update DVM again - the build directory is wiped before configuring.",
                           "If the source checkout itself looks broken, tick 'clean source checkout'."]
@@ -192,7 +274,8 @@ class InstallJob:
     def snapshot(self, since: int = 0) -> dict:
         with self.lock:
             return {"state": self.state, "step": self.step, "done_steps": list(self.done_steps),
-                    "steps": [{"id": i, "label": l} for i, l in STEPS], "dry_run": self.dry_run,
+                    "kind": self.kind, "pieces": self.pieces(),
+                    "steps": [{"id": i, "label": l} for i, l in self.steps()], "dry_run": self.dry_run,
                     "lines": self.lines[since:], "next": len(self.lines),
                     "started": self.started, "finished": self.finished,
                     "installed": settings.dvmhost_installed,
@@ -206,7 +289,7 @@ class InstallJob:
                     self.done_steps.append(self.step)
                 self.step = line.split(" ", 1)[1]
                 self._save_state()
-                self.lines.append(f"==> {dict(STEPS).get(self.step, self.step)}")
+                self.lines.append(f"==> {dict(STEPS + FNE_STEPS).get(self.step, self.step)}")
             elif line == "##DONE":
                 if self.step:
                     self.done_steps.append(self.step)
@@ -218,10 +301,11 @@ class InstallJob:
         with LOG.open("a", encoding="utf-8", errors="replace") as fh:
             fh.write(line + "\n")
 
-    def start(self, with_fne: bool = True, clean_src: bool = False) -> bool:
+    def start(self, with_fne: bool = True, clean_src: bool = False, kind: str = "full") -> bool:
         with self.lock:
             if self.state == "running":
                 return False
+            self.kind = kind
             self.state, self.step, self.done_steps, self.lines = "running", None, [], []
             self.started, self.finished = time.time(), None
             self.clean_src = clean_src
@@ -234,19 +318,12 @@ class InstallJob:
         ok = False
         try:
             if self.dry_run:
-                self._emit("[dry-run] no commands are executed; showing what a real install does")
-                for sid, _ in STEPS:
-                    self._emit(f"##STEP {sid}")
-                    for l in DRY_OUTPUT[sid]:
-                        time.sleep(0.25)
-                        self._emit(l)
-                self._emit("##DONE")
-                ok = True
+                ok = self._simulate(with_fne)
             else:
                 if os.geteuid() != 0:
                     self._emit("ERROR: installing needs root. Run Malinois Link Control via its systemd unit (runs as root).")
                 else:
-                    script = build_script(with_fne, self.clean_src)
+                    script = fne_only_script() if self.kind == "fne" else build_script(with_fne, self.clean_src)
                     # binary pipe + our own tolerant decoding (see iter_output)
                     self.proc = subprocess.Popen(["bash", "-c", script], stdout=subprocess.PIPE,
                                                  stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
@@ -261,6 +338,29 @@ class InstallJob:
             self.state = "ok" if ok else "failed"
             self.finished = time.time()
             self._save_state()
+
+
+    def _simulate(self, with_fne: bool) -> bool:
+        self._emit("[dry-run] no commands are executed; showing what a real install does")
+        if self.kind == "fne":
+            if self.fne_only_blocker():
+                self._emit("##STEP fne_check")
+                self._emit("ERROR: " + self.fne_only_blocker())
+                return False
+        out = dict(DRY_OUTPUT)
+        if self.kind == "fne" and not self.sim["dvmfne_bin"]:
+            out["fne_check"], out["fne_build"] = ["dvmfne binary missing; build tree found"], DRY_FNE_BUILD[1:]
+        for sid, _ in self.steps():
+            self._emit(f"##STEP {sid}")
+            for l in out[sid]:
+                time.sleep(DRY_DELAY)
+                self._emit(l)
+        self._emit("##DONE")
+        if self.kind == "fne":
+            self.sim.update(dvmfne_bin=True, dvmfne_unit=True)
+        else:
+            self.sim.update(dvmhost_bin=True, dvmfne_bin=True, build_tree=True, dvmfne_unit=with_fne)
+        return True
 
 
 job = InstallJob()

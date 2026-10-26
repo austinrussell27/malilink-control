@@ -291,6 +291,22 @@ def api_install_start(with_fne: bool = True, clean_src: bool = False):
     return {"ok": True, "dry_run": install_job.dry_run}
 
 
+@app.post("/api/install/fne")
+def api_install_fne():
+    """Install ONLY the dvmfne service (build just the dvmfne target if its binary is missing)."""
+    if not install_job.dry_run and not settings.is_root:
+        raise HTTPException(403, "Installing the dvmfne service needs root. Run Malinois Link Control as root: "
+                                 "sudo ./scripts/install-app.sh, or start it with sudo.")
+    if install_job.state == "running":
+        raise HTTPException(409, "An install is already running")
+    blocker = install_job.fne_only_blocker()
+    if blocker:
+        raise HTTPException(409, blocker)
+    if not install_job.start(kind="fne"):
+        raise HTTPException(409, "An install is already running")
+    return {"ok": True, "dry_run": install_job.dry_run}
+
+
 # ----------------------------------------------------------------- API: dashboard data
 @app.get("/api/snapshot")
 def api_snapshot():

@@ -129,14 +129,25 @@
     if (s.lines.length) $("#instLog").scrollTop = 1e9;
     $("#instSteps").innerHTML = s.steps.map(x => `<li class="${s.done_steps.includes(x.id) ? "done" : s.step === x.id ? "run" : ""}">${s.done_steps.includes(x.id) ? "✓" : s.step === x.id ? "●" : "○"} ${esc(x.label)}</li>`).join("");
     if (s.src_dir) $("#instPaths").innerHTML = `Source: <span class="mono">${esc(s.src_dir)}</span> · build dir (wiped before every configure): <span class="mono">${esc(s.build_dir)}</span>`;
+    const P = s.pieces || {}, chip = (ok, label) => `<span class="pill ${ok ? "green" : "gray"}">${ok ? "✓" : "✗"} ${label}</span>`;
+    $("#pieces").innerHTML = chip(P.dvmhost_bin, "dvmhost binary") + chip(P.dvmfne_bin, "dvmfne binary") + chip(P.dvmfne_unit, "dvmfne service")
+      + (P.build_tree ? "" : ` <span class="muted small">no build tree yet</span>`) + (s.dry_run ? ` <span class="pill blue">simulated</span>` : "");
+    $("#fneBtn").disabled = s.state === "running";
+    $("#fneBtn").title = !P.dvmfne_bin && !P.build_tree ? "Run Install / update DVM first" : "";
     const b = $("#instBadge");
-    if (s.state === "running") { b.className = "pill amber"; b.textContent = "installing…"; }
-    else if (s.state === "ok") { b.className = "pill green"; b.textContent = s.dry_run ? "install simulated (dry-run)" : "installed"; }
+    const what = s.kind === "fne" ? "dvmfne service" : "install";
+    if (s.state === "running") { b.className = "pill amber"; b.textContent = s.kind === "fne" ? "installing dvmfne service…" : "installing…"; }
+    else if (s.state === "ok") { b.className = "pill green"; b.textContent = s.dry_run ? `${what} simulated (dry-run)` : (s.kind === "fne" ? "dvmfne service installed" : "installed"); }
     else if (s.state === "failed") { b.className = "pill red"; b.textContent = "install failed — see log"; }
     else { b.className = s.installed ? "pill green" : "pill gray"; b.textContent = s.installed ? "dvmhost is installed" : "not installed yet"; }
     $("#instBtn").disabled = s.state === "running";
     if (s.state === "running") setTimeout(poll, 700); else polling = false;
   }
+  $("#fneBtn").onclick = async () => {
+    $("#fneMsg").textContent = "";
+    try { await api("/api/install/fne", {method: "POST"}); since = 0; if (!polling) { polling = true; poll(); } }
+    catch (e) { $("#fneMsg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  };
   $("#instBtn").onclick = async () => {
     try { await api(`/api/install/start?with_fne=${$("#instFne").checked}&clean_src=${$("#instClean").checked}`, {method: "POST"}); since = 0; if (!polling) { polling = true; poll(); } }
     catch (e) { alert(e.message); }

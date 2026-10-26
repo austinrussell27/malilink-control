@@ -13,7 +13,7 @@ Raspberry Pi 5, without editing YAML by hand. Reach it from your phone over Tail
 
 ![dashboard](docs/screenshots/dashboard.png)
 
-## What it does (v0.3.3)
+## What it does (v0.3.4)
 
 | Area | Status |
 |---|---|
@@ -48,6 +48,12 @@ Then open `http://<pi-tailscale-name>:8080` and follow **Setup**:
    configure wipes it and retries once. A broken/half-cloned checkout is re-cloned; tick **clean source checkout**
    to run `git clean -fdx` first. If the app is restarted mid-install, the job shows as *failed / interrupted* —
    just run it again. Manual fallback: `sudo rm -rf /opt/src/dvmhost/build` (or the whole `/opt/src/dvmhost`).
+   **Install dvmfne service only** (same step; chips show whether the dvmhost binary, dvmfne binary and dvmfne
+   service are present): never rebuilds dvmhost, never runs `make install`, never touches `/usr/local/etc`.
+   If `/usr/local/bin/dvmfne` exists it only installs `dvmfne.service` to `/lib/systemd/system`, creates the
+   `dvmhost` user/log dir if missing and runs `systemctl enable dvmfne` (not started). If the binary is missing but
+   `/opt/src/dvmhost/build` exists it runs `make dvmfne` there and copies `build/dvmfne` to `/usr/local/bin`.
+   If neither exists it refuses and asks you to run Install / update DVM first. (`POST /api/install/fne`)
 2. Pick **P25 → Conventional**, enter name/callsign, frequencies, NAC, modem port, network, talkgroups.
 3. **Review & save** – see every generated file, tick the two licence/terms boxes, save, start.
 4. **Program radio** – values to type into your radio's CPS.
