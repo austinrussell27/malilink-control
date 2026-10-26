@@ -170,7 +170,25 @@ def _info(st: dict) -> dict:
         "counts": {"total": len(lst), "enabled": sum(1 for x in lst if x["enabled"]),
                    "blocked": sum(1 for x in lst if not x["enabled"])},
         "demo": settings.demo, "dry_run": settings.dry_run,
+        "protocol": protocol(st), "rid_max": RID_MAX.get(protocol(st), ridacl.MAX_RID),
     }
+
+
+def protocol(st: dict) -> str:
+    joined = (st.get("pairing", {}).get("joined") or {})
+    if st.get("role") == "voice" and joined.get("bundle_full"):
+        return joined["bundle_full"].get("mode", "p25")
+    return (st.get("wizard") or {}).get("mode", "p25")
+
+
+# NXDN unit IDs are 16-bit (dvmhost nxdn/lc/RTCH.cpp masks srcId/dstId with 0xFFFF); P25/DMR are 24-bit.
+RID_MAX = {"p25": ridacl.MAX_RID, "dmr": ridacl.MAX_RID, "nxdn": 65535}
+
+
+def _check_rid(st: dict, rid: int) -> None:
+    p = protocol(st)
+    if rid > RID_MAX.get(p, ridacl.MAX_RID):
+        raise HTTPException(400, f"RID {rid} is too large for {p.upper()} (NXDN radio IDs are 1-65535).")
 
 
 def _editable(st: dict) -> None:
@@ -201,6 +219,7 @@ class RadioIn(ridacl.Radio):
 def add_radio(r: RadioIn):
     st = state.load(); _editable(st)
     lst = get(st)["list"]
+    _check_rid(st, r.rid)
     if any(x["rid"] == r.rid for x in lst):
         raise HTTPException(409, f"RID {r.rid} is already in the list - edit it instead.")
     lst.append(ridacl.Radio(**r.model_dump()).model_dump())
@@ -215,6 +234,7 @@ def edit_radio(rid: int, r: RadioIn):
     idx = next((i for i, x in enumerate(lst) if x["rid"] == rid), None)
     if idx is None:
         raise HTTPException(404, f"RID {rid} not found")
+    _check_rid(st, r.rid)
     if r.rid != rid and any(x["rid"] == r.rid for x in lst):
         raise HTTPException(409, f"RID {r.rid} already exists")
     lst[idx] = ridacl.Radio(**r.model_dump()).model_dump()
@@ -269,6 +289,9 @@ class ImportBody(BaseModel):
 def import_csv(b: ImportBody):
     st = state.load(); _editable(st)
     radios, errors = ridacl.from_csv(b.csv)
+    mx = RID_MAX.get(protocol(st), ridacl.MAX_RID)
+    errors += [f"RID {r.rid}: too large for {protocol(st).upper()} (max {mx})" for r in radios if r.rid > mx]
+    radios = [r for r in radios if r.rid <= mx]
     if not radios:
         raise HTTPException(400, {"message": "No valid rows found", "errors": errors[:20]})
     rs = get(st)

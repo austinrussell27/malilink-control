@@ -1,28 +1,48 @@
 {% extends "base.html" %}
 {% block title %}Program your radio · Malinois Link Control{% endblock %}
 {% block content %}
-<h1>Program your radio</h1>
-<p class="sub">Enter these values in your radio's programming software (CPS){% if radio and radio.trunked %} as a P25 trunking system / personality{% else %} as a new P25 conventional channel / personality{% endif %}.</p>
+{% set proto = (radio.protocol if radio else "p25") %}
+{% set plabel = {"p25": "P25", "dmr": "DMR", "nxdn": "NXDN"}[proto] %}
+<h1>Program your radio <span class="pill amber">{{ plabel }}</span></h1>
+<p class="sub">Enter these values in your radio's programming software (CPS){% if radio and radio.trunked %} as {{ "an" if proto == "nxdn" else "a" }} {{ plabel }} trunking system / personality{% else %} as {{ "an" if proto == "nxdn" else "a" }} new {{ plabel }} conventional channel / personality{% endif %}.</p>
 {% if not radio %}
   <div class="notice">{{ err or "Finish the setup wizard first — then your radio values will appear here." }} <a href="/setup">Go to setup →</a></div>
 {% else %}
 <div class="grid g3">
   <div class="card radio-card"><h3>{{ "Control channel (radio RX)" if radio.trunked else "Receive frequency" }}</h3><div class="val">{{ "%.5f"|format(radio.radio_rx_mhz) }}</div><div class="muted">MHz — what your radio listens to</div></div>
   <div class="card radio-card"><h3>Transmit frequency</h3><div class="val">{{ "%.5f"|format(radio.radio_tx_mhz) }}</div><div class="muted">MHz — what your radio talks on{% if radio.offset_mhz %} (offset {{ "%+.4f"|format(radio.offset_mhz) }} MHz){% else %} (simplex){% endif %}</div></div>
+  {% if proto == "dmr" %}
+  <div class="card radio-card" id="pgColorCode"><h3>Color code</h3><div class="val mono">{{ radio.dmr.color_code }}</div><div class="muted">Set the same color code on every DMR channel for this system.</div></div>
+  {% elif proto == "nxdn" %}
+  <div class="card radio-card" id="pgRan"><h3>RAN</h3><div class="val mono">{{ radio.nxdn.ran }}</div><div class="muted">Radio Access Number — set the same RAN on the radio's channel.</div></div>
+  {% else %}
   <div class="card radio-card"><h3>NAC</h3><div class="val mono">{{ radio.nac_hex }}</div><div class="muted">hex (= {{ radio.nac_dec }} decimal). Set both Rx and Tx NAC.</div></div>
+  {% endif %}
 </div>
 {% if radio.trunked %}
 <div class="grid g2" style="margin-top:16px">
   <div class="card"><h2>Trunking system</h2>
     <table class="t">
-      <tr><td class="muted">System type</td><td>P25 Phase 1 trunking (FDMA)</td></tr>
+      <tr><td class="muted">System type</td><td>{{ radio.mode }}</td></tr>
+      {% if proto == "p25" %}
       <tr><td class="muted">WACN</td><td class="mono">{{ radio.wacn }} <span class="muted">(hex)</span></td></tr>
       <tr><td class="muted">System ID</td><td class="mono">{{ radio.sys_id }} <span class="muted">(hex)</span></td></tr>
       <tr><td class="muted">RFSS / Site</td><td class="mono">{{ radio.rfss_id }} / {{ radio.site_id }}</td></tr>
-      <tr><td class="muted">Control channel</td><td class="mono">{{ "%.5f"|format(radio.radio_rx_mhz) }} MHz</td></tr>
-    </table></div>
+      {% elif proto == "dmr" %}
+      <tr><td class="muted">Color code</td><td class="mono">{{ radio.dmr.color_code }}</td></tr>
+      <tr><td class="muted">Network ID / Site ID</td><td class="mono">{{ radio.dmr.net_id }} / {{ radio.dmr.site_id }} <span class="muted">(hex, small site model)</span></td></tr>
+      <tr><td class="muted">Control (TSCC) timeslot</td><td class="mono">TS{{ radio.dmr.tscc_slot }}</td></tr>
+      {% else %}
+      <tr><td class="muted">RAN</td><td class="mono">{{ radio.nxdn.ran }}</td></tr>
+      <tr><td class="muted">System / Site ID</td><td class="mono">{{ radio.nxdn.sys_id }} / {{ radio.nxdn.site_id }} <span class="muted">(hex)</span></td></tr>
+      <tr><td class="muted">Location ID</td><td class="mono">{{ radio.nxdn.location_id }} <span class="muted">(hex {{ radio.nxdn.location_id_hex }})</span></td></tr>
+      {% endif %}
+      <tr><td class="muted">Control channel</td><td class="mono">{{ "%.5f"|format(radio.radio_rx_mhz) }} MHz (ch {{ radio.band_plan.iden }}-{{ radio.channelNo }})</td></tr>
+    </table>
+    {% if proto != "p25" %}<p class="notice blue small" style="margin-top:10px">{% if proto == "dmr" %}dvmhost runs a DMR TSCC dedicated control channel (Tier III-style). Which commercial Tier III radios interoperate with it is not documented upstream — test on the bench first.{% else %}dvmhost runs an NXDN dedicated control channel. Upstream does not document which radio trunking modes interoperate, and its config generator ships no NXDN trunking template — test on the bench first.{% endif %}</p>{% endif %}
+  </div>
   <div class="card"><h2>Band plan (identifier {{ radio.band_plan.iden }})</h2>
-    <p class="muted small">Some radios (e.g. Motorola) need this as a custom band plan / frequency table.</p>
+    <p class="muted small">{% if proto == "p25" %}Some radios (e.g. Motorola) need this as a custom band plan / frequency table.{% else %}Voice-channel frequencies are listed below so you can check them against your radio's channel plan.{% endif %}</p>
     <table class="t">
       <tr><td class="muted">Base frequency</td><td class="mono">{{ "%.5f"|format(radio.band_plan.base_mhz) }} MHz</td></tr>
       <tr><td class="muted">Channel spacing</td><td class="mono">{{ radio.band_plan.spacing_khz }} kHz</td></tr>
@@ -40,18 +60,40 @@
   <div class="card"><h2>Channel settings</h2>
     <table class="t">
       <tr><td class="muted">Mode</td><td>Digital — {{ radio.mode }}</td></tr>
-      <tr><td class="muted">Bandwidth</td><td>12.5 kHz (narrow)</td></tr>
+      <tr><td class="muted">Bandwidth</td><td>{{ radio.band_plan.bandwidth_khz }} kHz{% if proto == "nxdn" %} (NXDN48 — often labelled "6.25 kHz" or "NXDN-VN"){% else %} (narrow){% endif %}</td></tr>
+      {% if proto == "dmr" %}
+      <tr><td class="muted">Color code</td><td class="mono">{{ radio.dmr.color_code }}</td></tr>
+      <tr><td class="muted">Timeslots in use</td><td class="mono">{% for s in radio.dmr.slots %}TS{{ s }}{% if not loop.last %} + {% endif %}{% endfor %}</td></tr>
+      <tr><td class="muted">Admit criteria</td><td>Color code free (or "always")</td></tr>
+      <tr><td class="muted">Radio ID</td><td>Your own unique DMR ID (24-bit, e.g. your RadioID.net ID). Every radio needs a different one.</td></tr>
+      {% elif proto == "nxdn" %}
+      <tr><td class="muted">RAN</td><td class="mono">{{ radio.nxdn.ran }}</td></tr>
+      <tr><td class="muted">Unit ID (radio ID)</td><td>1–65535 (NXDN IDs are 16-bit). Every radio needs a different one.</td></tr>
+      {% else %}
       <tr><td class="muted">Squelch / "Tx & Rx NAC"</td><td class="mono">{{ radio.nac_hex }}</td></tr>
-      <tr><td class="muted">Encryption</td><td>Off</td></tr>
       <tr><td class="muted">Unit ID (radio ID)</td><td>Your own unique number (e.g. a DMR/CCS7 ID). Every radio needs a different one.</td></tr>
+      {% endif %}
+      <tr><td class="muted">Encryption</td><td>Off</td></tr>
       <tr><td class="muted">Channel name</td><td>{{ radio.system_name }}</td></tr>
     </table>
   </div>
-  <div class="card"><h2>Talkgroups</h2>
+  <div class="card"><h2>{% if proto == "dmr" %}Talkgroups (contacts){% elif proto == "nxdn" %}Groups{% else %}Talkgroups{% endif %}</h2>
+    {% if proto == "dmr" %}
+    <p class="muted small">Add each TG as a <b>group call contact</b>. {% if not radio.trunked %}Make one channel per TG + timeslot below (same RX/TX frequency and color code), with the TG as its transmit contact and it in the RX group list.{% else %}Add them to the RX group list of the trunked personality.{% endif %}</p>
+    <table class="t" id="pgDmrTgs"><tr><th>Contact / TG ID</th>{% if not radio.trunked %}<th>Timeslot</th>{% endif %}<th>Name</th><th></th></tr>
+    {% for t in radio.talkgroups %}<tr><td class="mono big" style="font-size:18px">{{ t.tgid }}</td>{% if not radio.trunked %}<td class="mono">TS{{ t.slot }}</td>{% endif %}<td>{{ t.name }} <span class="muted small">{{ t.alias }}</span></td><td>{% if t.parrot %}<span class="pill blue">parrot – test here</span>{% endif %}</td></tr>{% endfor %}
+    </table>
+    {% elif proto == "nxdn" %}
+    <p class="muted small">Add each as a group ID and pick one as the channel's transmit group.</p>
+    <table class="t"><tr><th>Group ID</th><th>Name</th><th></th></tr>
+    {% for t in radio.talkgroups %}<tr><td class="mono big" style="font-size:18px">{{ t.tgid }}</td><td>{{ t.name }} <span class="muted small">{{ t.alias }}</span></td><td>{% if t.parrot %}<span class="pill blue">parrot – test here</span>{% endif %}</td></tr>{% endfor %}
+    </table>
+    {% else %}
     <p class="muted small">Add each as a talkgroup and pick one as the channel's transmit talkgroup.</p>
     <table class="t"><tr><th>TG ID</th><th>Name</th><th></th></tr>
     {% for t in radio.talkgroups %}<tr><td class="mono big" style="font-size:18px">{{ t.tgid }}</td><td>{{ t.name }} <span class="muted small">{{ t.alias }}</span></td><td>{% if t.parrot %}<span class="pill blue">parrot – test here</span>{% endif %}</td></tr>{% endfor %}
     </table>
+    {% endif %}
   </div>
 </div>
 <p class="hint">Field names differ between radio brands. "Rx/Tx frequency" here is from the radio's point of view (the repeater's output is your receive).</p>

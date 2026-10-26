@@ -10,6 +10,18 @@ int main(int argc, char** argv) {
     std::printf("iAgree=%d\n", c["iAgreeNotToBeStupid"].as<bool>(false));
     std::printf("p25.enable=%d control.enable=%d dedicated=%d\n", c["protocols"]["p25"]["enable"].as<bool>(false),
         c["protocols"]["p25"]["control"]["enable"].as<bool>(false), c["protocols"]["p25"]["control"]["dedicated"].as<bool>(false));
+    // DMR / NXDN, same reads + defaults as Host.cpp / Host.Config.cpp / dmr/Control.cpp / nxdn/Control.cpp
+    yaml::Node pr = c["protocols"];
+    std::printf("dmr.enable=%d dmr.control.enable=%d dmr.dedicated=%d dmr.slot=%u dmr.beacons=%d\n",
+        pr["dmr"]["enable"].as<bool>(false), pr["dmr"]["control"]["enable"].as<bool>(false),
+        pr["dmr"]["control"]["dedicated"].as<bool>(false), pr["dmr"]["control"]["slot"].as<uint32_t>(0U),
+        pr["dmr"]["beacons"]["enable"].as<bool>(false));
+    std::printf("nxdn.enable=%d nxdn.control.enable=%d nxdn.dedicated=%d\n", pr["nxdn"]["enable"].as<bool>(false),
+        pr["nxdn"]["control"]["enable"].as<bool>(false), pr["nxdn"]["control"]["dedicated"].as<bool>(false));
+    std::printf("colorCode=%u dmrNetId=%lX ran=%u fixedMode=%d duplex=%d\n", sc["colorCode"].as<uint32_t>(2U),
+        std::strtoul(sc["dmrNetId"].as<std::string>("1").c_str(), NULL, 16), sc["ran"].as<uint32_t>(1U),
+        c["system"]["fixedMode"].as<bool>(false), c["system"]["duplex"].as<bool>(true));
+    std::printf("net.slot1=%d net.slot2=%d\n", c["network"]["slot1"].as<bool>(true), c["network"]["slot2"].as<bool>(true));
     std::printf("authoritative=%d supervisor=%d\n", sc["authoritative"].as<bool>(true), sc["supervisor"].as<bool>(false));
     std::printf("channelId=%u channelNo=%lu nac=%lX sysId=%lX netId=%lX rfss=%lX site=%lX\n", sc["channelId"].as<uint32_t>(0U),
         std::strtoul(sc["channelNo"].as<std::string>("1").c_str(), NULL, 16), std::strtoul(sc["nac"].as<std::string>("F7E").c_str(), NULL, 16),

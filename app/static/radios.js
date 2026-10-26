@@ -13,6 +13,9 @@ function render() {
       <button class="btn sm" data-ed="${r.rid}">Edit</button><button class="btn sm danger" data-del="${r.rid}" aria-label="Delete">✕</button>`}</td></tr>`).join("");
   $("#none").hidden = rows.length > 0;
   $("#none").textContent = R.radios.length ? "No radios match your search." : "No radios yet — add one above or import a CSV.";
+  const pn = $("#protoNote");
+  pn.hidden = R.protocol !== "nxdn";
+  pn.textContent = "NXDN system: radio (unit) IDs are 16-bit, so only 1–65535 can be used.";
   $("#cTotal").textContent = R.counts.total; $("#cOn").textContent = R.counts.enabled; $("#cOff").textContent = R.counts.blocked;
   $("#lock").checked = R.lockdown; $("#lock").disabled = ro;
   $("#lockCard").classList.toggle("locked", R.lockdown);

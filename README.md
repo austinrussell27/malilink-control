@@ -13,19 +13,19 @@ Raspberry Pi 5, without editing YAML by hand. Reach it from your phone over Tail
 
 ![dashboard](docs/screenshots/dashboard.png)
 
-## What it does (v0.3.5)
+## What it does (v0.4.0)
 
 | Area | Status |
 |---|---|
 | **Install DVM** (wizard step 2, after Welcome): apt deps → clone → `cmake`/`make` → `make install` → `dvmhost` user → systemd units, as a background job with live progress | ✅ real on any Pi with systemd (simulated only in dry-run) |
-| **P25 conventional wizard** → `config.yml`, `iden_table.dat`, `talkgroup_rules.yml`, `fne-config.yml` generated from the repo's example files with ruamel.yaml (comments preserved), talkgroups validated against the repo JSON schema | ✅ real |
+| **P25, DMR and NXDN** wizard — conventional or trunked for each (see the matrix in [DMR & NXDN](#dmr--nxdn)) → `config.yml`, `iden_table.dat`, `talkgroup_rules.yml`, `fne-config.yml` generated from the repo's example files with ruamel.yaml (comments preserved), talkgroups validated against the repo JSON schema | ✅ real |
 | **Start/stop** dvmhost / dvmfne via systemd | ✅ real (simulated in dry-run) |
-| **Program your radio** page (RX/TX freq, NAC, talkgroups) | ✅ real |
+| **Program your radio** page per protocol (P25: NAC/WACN/sys; DMR: color code, timeslots, TG contacts; NXDN: RAN, group IDs, location ID) | ✅ real |
 | **Dashboard**: per-Pi status (service, uptime, mode, TX, modem, freqs), who's talking, grants, affiliations, recent calls, live logs | ✅ live data layer + demo data layer |
-| **P25 trunked, multi-Pi**: wizard "Trunked" makes this Pi the control channel; extra Pis use "Add this Pi as a voice channel" + a pairing code. The control Pi assigns the channel, rewrites its `voiceChNo` list and restarts dvmhost; the voice Pi writes its own VC config pointing back at the control Pi | ✅ implemented, tested in dry-run (not yet on RF hardware) |
+| **Trunked, multi-Pi (P25 / DMR TSCC / NXDN CC)**: wizard "Trunked" makes this Pi the control channel; extra Pis use "Add this Pi as a voice channel" + a pairing code. The control Pi assigns the channel, rewrites its `voiceChNo` list and restarts dvmhost; the voice Pi writes its own VC config pointing back at the control Pi | ✅ implemented, tested in dry-run (not yet on RF hardware) |
 | **Radios page** (RID manager): add / edit / delete radio IDs with a name, Allowed/Blocked, search, CSV import/export, **Lockdown** toggle → writes dvmhost's real `rid_acl.dat` + `system.radio_id.acl` | ✅ real; trunked: control Pi pushes the list to every voice Pi |
 | **"Load my previous system values"** preset on the Setup welcome screen (ML105 trunked system) | ✅ fills the wizard (see mapping below) |
-| **DMR / NXDN** | 🟡 visible in the wizard as "coming next" |
+| **DMR / NXDN** (new in 0.4.0) | ✅ generated + parsed with dvmhost's own YAML parser; dry-run tested; not yet tested on RF hardware |
 | Branding: Malinois Link logo in header, favicon, About and the setup welcome screen | ✅ |
 
 ## Install on the Pi (Raspberry Pi OS Lite, Debian trixie, arm64)
@@ -77,7 +77,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 MALILINK_DEMO=1 .venv/bin/uvicorn app.main:app --port 8080     # http://localhost:8080
 .venv/bin/pip install pytest && .venv/bin/python -m pytest -q tests
 ```
-`MALILINK_DEMO=1` = simulated 3-Pi P25 site on the dashboard (implies dry-run unless `MALILINK_DRY_RUN=0`).
+`MALILINK_DEMO=1` = simulated 3-Pi trunked site on the dashboard (implies dry-run unless `MALILINK_DRY_RUN=0`).
+`MALILINK_DEMO_PROTOCOL=p25|dmr|nxdn` picks the demo protocol (otherwise it follows the protocol saved in Setup; default P25).
+DMR demo voice channels carry two calls at once (TS1/TS2).
 
 ### Real mode vs dry-run
 
@@ -119,6 +121,7 @@ dvm_templates/          example configs + schema + dvmhost.service copied from d
 systemd/                malilink-control.service, dvmfne.service
 scripts/                install-app.sh, refresh_templates.sh
 tests/                  test_smoke.py, test_radios.py, test_mode.py, test_pairing.py (2-3 live app processes), test_dvm_yaml.py,
+                        test_dmr_nxdn.py (generator/validation/yaml/logparse), test_dmr_nxdn_pairing.py (live DMR/NXDN pairing),
                         dvmyaml/ (dvmhost YAML parser checker), fake_dvmhost.py (fake REST server)
 docs/screenshots/       UI screenshots
 ```
@@ -126,12 +129,60 @@ docs/screenshots/       UI screenshots
 ## How it talks to DVM (verified in dvmhost source)
 
 * REST (`src/host/restapi`, `src/fne/restapi`): `PUT /auth {"auth": sha256_hex(restPassword)}` → `token`;
-  then header `X-DVM-Auth-Token`. Used read-only: `GET /status`, `/p25/report-affiliations`, `/voice-ch`.
-  The client refuses any path not on a read-only allow-list (no `/mdm/mode`, `/grant-tg`, `/p25/rid`, `/p25/raw-tsbk` …).
+  then header `X-DVM-Auth-Token`. Used read-only: `GET /status`, `/p25|dmr|nxdn/report-affiliations` (picked from
+  `p25Enabled`/`dmrEnabled`/`nxdnEnabled` in `/status`), `/voice-ch`.
+  The client refuses any path not on a read-only allow-list (no `/mdm/mode`, `/grant-tg`, `/p25/rid`, `/p25/raw-tsbk`,
+  `/dmr/beacon`, `/dmr/cc-enable`, `/dmr/cc-broadcast`, `/dmr/rid`, `/nxdn/cc`, `/nxdn/cc-enable` …).
 * dvmhost REST on `127.0.0.1:9990`; dvmfne REST moved to `9991` (both default to 9990).
-* Logs: `<filePath>/DVM-YYYY-MM-DD.log` and `.activity.log` (activity lines `A: <ts> P25 RF|Net …`).
+* Logs: `<filePath>/DVM-YYYY-MM-DD.log` and `.activity.log` (activity lines `A: <ts> P25|DMR|NXDN RF|Net …`;
+  DMR lines start `Slot N …` and use "voice header" / "end of voice transmission"; see `app/data/logparse.py`).
 * Config parsing quirks honoured: `channelNo`, `nac`, `netId`, `sysId`, `rfssId`, `siteId` are hex strings;
   `voiceChNo` must not be empty; iden offset must be non-zero (simplex uses `simplexSameFrequency`).
+
+## DMR & NXDN
+
+Pick the protocol on the wizard's **System type** step; the **System IDs**, **Talkgroups** and **Review** steps change
+with it. Exactly one protocol is enabled in `config.yml` (`protocols.<p>.enable`) with `system.fixedMode: true` —
+dvmhost refuses more than one protocol in fixed mode and a dedicated control channel forbids the other two
+(`Host.cpp`).
+
+| | P25 | DMR | NXDN |
+|---|---|---|---|
+| Conventional | ✅ NAC, site/sys IDs | ✅ Tier II: color code 0–15, both/either timeslot (`network.slot1/slot2`), per-slot talkgroups, optional roaming beacons (duplex only) | ✅ RAN 0–63, group IDs (16-bit), location ID shown |
+| Trunked (control + voice Pis) | ✅ P25 CC | ✅ DMR TSCC dedicated (`protocols.dmr.control.enable/dedicated/slot`) | ✅ NXDN CC dedicated (`protocols.nxdn.control.enable/dedicated`) ⚠️ less exercised upstream |
+| Voice-channel pairing / auto-join | ✅ | ✅ (bundle carries `mode` + color code/slots) | ✅ (bundle carries `mode` + RAN; 6.25 kHz steps) |
+| Channel bandwidth / step | 12.5 kHz / 2 × 6.25 kHz | 12.5 kHz / 2 × 6.25 kHz | 6.25 kHz / 1 × 6.25 kHz (NXDN48) |
+| Channel numbers | 1–4095 | 1–4095 | 1–1023 (NXDN `SiteData` clamp) |
+| Talkgroup / radio IDs | TG 1–65535 / RID 24-bit | TG + RID 24-bit, TG per slot | 1–65535 for both |
+| Site IDs | NAC, WACN, sys, RFSS, site | `dmrNetId` 1–7F, site 1–1F (small site model) | sys 1–3FF, site; location ID = `(sys & 0x3FF) << 12 \| site` |
+| Dashboard / who's talking | ✅ | ✅ per timeslot (TS1/TS2), grants, affiliations (`/dmr/report-affiliations`) | ✅ (`/nxdn/report-affiliations`) |
+| Program radio page | ✅ | ✅ color code, TS per TG, contacts | ✅ RAN, group IDs, location ID, 6.25 kHz |
+
+Every key comes from `configs/config.example.yml` and is read in `Host.Config.cpp` / `Host.cpp` /
+`dmr/Control.cpp` / `nxdn/Control.cpp`: `system.config.colorCode` (uint, clamped 0–15), `system.config.dmrNetId`
+(hex string), `system.config.ran` (uint), `network.slot1/slot2`, `protocols.dmr.beacons.enable`,
+`protocols.dmr.control.{enable,dedicated,slot}`, `protocols.nxdn.control.{enable,dedicated}`.
+`talkgroup_rules.yml` `source.slot` only matters for DMR (P25/NXDN look up with slot 0, which `TalkgroupRulesLookup::find` treats as "any slot");
+we write 1 for P25/NXDN like the example. `tests/dvmyaml/yamlcheck` parses the generated files with dvmhost's own
+YAML parser and prints these values the way dvmhost reads them.
+
+**Honest limitations**
+* Nothing here has been tested on RF hardware for DMR or NXDN yet (dry-run + dvmhost YAML parser only).
+* DMR trunking is dvmhost's TSCC dedicated control channel (Tier III-style). Upstream doesn't document which
+  commercial Tier III radios interoperate — bench-test first.
+* NXDN trunking: dvmhost supports a dedicated NXDN CC and grants via RPC like P25/DMR, but the repo's own
+  `dvmcfggen` only ships P25/DMR trunking templates, so it is less exercised. Radio trunking-type compatibility is
+  not documented upstream.
+* NXDN is NXDN48 only (dvmhost frames are 384 bits / 4800 bps). The 6.25 kHz bandwidth we put in the NXDN iden row
+  is our choice; it isn't clear that dvmhost uses the iden bandwidth for NXDN.
+* The NXDN location ID is computed by dvmhost; the app only displays the same math (`nxdn/Control.cpp`).
+* DMR/NXDN *system*-log lines in demo mode are illustrative; activity-log lines use the real dvmhost strings.
+* dvmhost's `/status` has no color code / RAN, so the dashboard shows them from the saved config.
+* `fne-config.yml` keeps `allowDMRTraffic` / `allowP25Traffic` / `allowNXDNTraffic` at the example's `true`.
+
+![setup DMR](docs/screenshots/setup-dmr-ids.png)
+![program NXDN](docs/screenshots/program-nxdn.png)
+![dashboard DMR](docs/screenshots/dashboard-dmr.png)
 
 ## Radios (RID access list)
 
@@ -191,7 +242,7 @@ API: `GET/POST /api/radios`, `PUT/DELETE /api/radios/{rid}`, `POST /api/radios/l
 (radio programming) — check the frequencies shown before saving. Note the VC peer 900003 and an auto-assigned 2nd VC
 would collide with console peer 900004; give a 2nd VC an explicit peer ID on its join screen.
 
-## Trunked P25 across several Pis
+## Trunked P25 / DMR / NXDN across several Pis
 
 **Unpairing**
 * **Voice Pi → "Unpair this Pi"** (Dashboard, Trunking, Setup welcome / Review): stops dvmhost/dvmfne, moves its
@@ -206,12 +257,12 @@ would collide with console peer 900004; give a 2nd VC an explicit peer ID on its
 API: `POST /api/pairing/voice-channels/{chNo}/unpair`, `POST /api/pairing/reset {notify}`. Safe in dry-run
 (services simulated, files under `var/dryrun/etc`).
 
-1. **Control Pi:** Setup → P25 → **Trunked** → finish the wizard (it always runs dvmfne). dvmhost will
+1. **Control Pi:** Setup → P25, DMR or NXDN → **Trunked** → finish the wizard (it always runs dvmfne). dvmhost will
    not start until at least one voice channel is paired (dvmhost refuses an empty `voiceChNo`).
 2. **Trunking → Create pairing code** (10 min, single use).
 3. **Each voice Pi:** install the app, Setup → **Add this Pi as a voice channel**, enter
    `http://<control-pi>:8080`, the code, its modem port and (optionally) a specific TX frequency.
-4. The control Pi gives it the next free channel (`step = bandwidth / spacing`, i.e. 12.5 kHz apart) on
+4. The control Pi gives it the next free channel (`step = bandwidth / spacing`, i.e. 12.5 kHz apart; 6.25 kHz for NXDN) on
    the same identity row, regenerates its config with the new `voiceChNo` entry and restarts dvmhost if
    running. The voice Pi writes its config, `iden_table.dat` and `talkgroup_rules.yml`; you start it from
    its dashboard. Remove a VC from the control Pi's Trunking page.

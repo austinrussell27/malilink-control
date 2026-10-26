@@ -32,7 +32,9 @@ def test_wizard_generates_real_keys():
 
 def test_validation_and_safety():
     assert c.post("/api/wizard/preview", json={**W, "nac": "XYZ"}).status_code == 422
-    assert c.post("/api/wizard/preview", json={**W, "mode": "dmr"}).status_code == 400
+    assert c.post("/api/wizard/preview", json={**W, "mode": "dmr"}).status_code == 200  # DMR supported since 0.4.0
+    assert c.post("/api/wizard/preview", json={**W, "mode": "dmr", "color_code": 16}).status_code == 422
+    assert c.post("/api/wizard/preview", json={**W, "mode": "nxdn", "ran": 64}).status_code == 422
     assert c.post("/api/wizard/apply", json={**W, "ack_terms": False}).status_code == 400
     assert c.post("/api/service/ssh/stop").status_code == 400
 

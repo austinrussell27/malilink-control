@@ -14,6 +14,27 @@ from .dvmrest import DvmRest
 from .logparse import log_paths, parse_activity, tail
 
 
+def site_info(st: dict) -> dict:
+    """Protocol + site identifiers from our own saved config (dvmhost's /status has no colorCode/RAN)."""
+    w = st.get("wizard") or {}
+    joined = ((st.get("pairing") or {}).get("joined") or {})
+    if st.get("role") == "voice" and joined.get("bundle_full"):
+        b = joined["bundle_full"]
+        proto, site = b.get("mode", "p25"), b.get("site", {})
+    else:
+        proto = w.get("mode", "p25")
+        site = {"nac": w.get("nac", "293"), "color_code": w.get("color_code", 1), "ran": w.get("ran", 1),
+                "dmr_slot1": w.get("dmr_slot1", True), "dmr_slot2": w.get("dmr_slot2", True)}
+    if proto == "dmr":
+        slots = [str(n) for n in (1, 2) if site.get(f"dmr_slot{n}", True)]
+        label = f"CC {site.get('color_code', 1)} · TS {'+'.join(slots)}"
+    elif proto == "nxdn":
+        label = f"RAN {site.get('ran', 1)}"
+    else:
+        label = f"NAC {site.get('nac', '293')}"
+    return {"protocol": proto.upper(), "site_label": label}
+
+
 class LiveSource(DataSource):
     def __init__(self) -> None:
         self._host: DvmRest | None = None
@@ -35,6 +56,7 @@ class LiveSource(DataSource):
                 "modem": {}, "channelId": None, "channelNo": None, "nac": None, "peerId": None,
                 "lastSrcId": None, "lastDstId": None, "dry_run": settings.dry_run}
         w = st.get("wizard") or {}
+        node.update(site_info(st))
         if role != "voice" and (w.get("network_mode") == "local_fne" or w.get("topology") == "trunked"):
             node["fne"] = systemd.status(settings.fne_unit)
         grants, affs = [], []
@@ -52,8 +74,11 @@ class LiveSource(DataSource):
                         grants.append({"node": node["name"], "channelNo": ch.get("channelNo"),
                                        "srcId": ch.get("lastSrcId"), "dstId": ch.get("lastDstId"),
                                        "tx": ch.get("tx", False)})
-                if s.get("p25Enabled"):
-                    affs = self._host.get("/p25/report-affiliations").get("affiliations", [])
+                # /status reports which protocol objects exist (RESTAPI.cpp restAPI_GetStatus)
+                for proto in ("p25", "dmr", "nxdn"):
+                    if s.get(f"{proto}Enabled"):
+                        affs += [dict(a, mode=proto.upper()) for a in
+                                 self._host.get(f"/{proto}/report-affiliations").get("affiliations", [])]
             except Exception as e:
                 node["error"] = f"REST: {e}"
         _, act = log_paths(settings.dvm_log_dir, "DVM")

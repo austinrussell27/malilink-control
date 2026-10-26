@@ -2,7 +2,7 @@
 
 Flow
 ----
-1. CONTROL Pi (set up with the wizard as P25 -> Trunked, role=control):
+1. CONTROL Pi (set up with the wizard as P25, DMR or NXDN -> Trunked, role=control):
      POST /api/pairing/codes  -> {"code": "K7Q-4MD", "expires": <epoch>}   (10 min, single use)
 2. NEW Pi, "Add a voice channel" mode (Setup welcome screen / Trunking page):
      POST /api/pairing/join {control_url, code, name, modem_*, requested_tx_mhz?, ack_license, ack_terms}
@@ -39,7 +39,7 @@ from pydantic import BaseModel
 
 from . import radios, state
 from .configgen import iden
-from .configgen.generate import (RPC_PORT, VoiceLocal, WizardInput, channel_for_freq, channel_step, generate,
+from .configgen.generate import (MODES, RPC_PORT, site_dict, VoiceLocal, WizardInput, channel_for_freq, channel_step, generate,
                                  generate_voice_channel, next_free_channel, write_files)
 from .services import systemd
 from .settings import settings
@@ -78,7 +78,7 @@ def apply_control_config(st: dict) -> dict:
 def create_code():
     st = state.load()
     if not _is_control(st):
-        raise HTTPException(409, "Set this Pi up as a P25 trunked control channel first (Setup -> Trunked).")
+        raise HTTPException(409, "Set this Pi up as a trunked control channel first (Setup -> Trunked).")
     codes = {c: v for c, v in st["pairing"]["codes"].items() if v["expires"] > time.time()}
     code = _new_code()
     codes[code] = {"expires": time.time() + CODE_TTL}
@@ -130,11 +130,11 @@ def claim(c: Claim, request: Request):
     used = {plan.channel_no} | {v["channelNo"] for v in st["pairing"]["voice_channels"]}
     try:
         if c.requested_tx_mhz:
-            ch = channel_for_freq(plan.entry, c.requested_tx_mhz)
+            ch = channel_for_freq(plan.entry, c.requested_tx_mhz, MODES[w.mode]["max_ch"])
             if ch in used:
                 raise ValueError("That frequency is already used by another channel in this system")
         else:
-            ch = next_free_channel(plan.channel_no, used, channel_step(plan.entry))
+            ch = next_free_channel(plan.channel_no, used, channel_step(plan.entry), MODES[w.mode]["max_ch"])
     except ValueError as e:
         raise HTTPException(400, str(e))
     if any(v["name"] == c.name for v in st["pairing"]["voice_channels"]):
@@ -171,7 +171,8 @@ def claim(c: Claim, request: Request):
         "iden": {"channel_id": e.channel_id, "base_freq": e.base_freq, "spacing_khz": e.spacing_khz,
                  "offset_mhz": e.offset_mhz, "bandwidth_khz": e.bandwidth_khz},
         "iden_table": g.files["iden_table.dat"],
-        "site": {"nac": w.nac, "wacn": w.wacn, "sys_id": w.sys_id, "rfss_id": w.rfss_id, "site_id": w.site_id},
+        "mode": w.mode,
+        "site": site_dict(w),
         "system_name": w.system_name, "callsign": w.callsign, "location": w.location,
         "talkgroups": [t.model_dump() for t in w.talkgroups],
         "rpc": {"address": cc_host, "port": RPC_PORT, "password": sec["rpc_password"]},
@@ -249,7 +250,7 @@ def join(j: Join, request: Request):
     written = write_files(g)
     summary = {"control_url": control_url, "control_ip": cc_ip, "channelNo": bundle["channelNo"],
                "tx_mhz": bundle["tx_mhz"], "rx_mhz": bundle["rx_mhz"], "system_name": bundle["system_name"],
-               "name": name}
+               "name": name, "mode": bundle.get("mode", "p25")}
     st.update(role="voice", setup_complete=True, rest_password=g.secrets["rest_password"], fne_rest_password=None,
               secrets={**(st.get("secrets") or {}), "rest_password": g.secrets["rest_password"]})
     st["pairing"]["joined"] = {"summary": summary, "cluster_key": bundle["cluster_key"],

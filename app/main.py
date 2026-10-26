@@ -12,11 +12,12 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from typing import Literal
 from pydantic import BaseModel, ValidationError
 
 from . import __version__, mode, pairing, radios, state
 from .configgen import iden, ridacl
-from .configgen.generate import WizardInput, generate, write_files
+from .configgen.generate import MODES, WizardInput, generate, write_files
 from .data import get_source
 from .services import systemd
 from .services.installer import job as install_job
@@ -166,12 +167,15 @@ def api_serial_ports():
 class FreqIn(BaseModel):
     tx_mhz: float
     rx_mhz: float
+    mode: Literal["p25", "dmr", "nxdn"] = "p25"
 
 
 @app.post("/api/calc/freq")
 def api_calc(f: FreqIn):
     try:
-        p = iden.plan_conventional(f.tx_mhz, f.rx_mhz, settings.template_dir / "iden_table.example.dat")
+        m = MODES[f.mode]
+        p = iden.plan_conventional(f.tx_mhz, f.rx_mhz, settings.template_dir / "iden_table.example.dat",
+                                   bandwidth_khz=m["bandwidth_khz"], max_ch=m["max_ch"])
     except Exception as e:
         raise HTTPException(400, str(e))
     return {"channelId": p.entry.channel_id, "channelNo": p.channel_no_hex, "iden_line": p.entry.line(),

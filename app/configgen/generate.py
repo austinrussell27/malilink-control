@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
@@ -23,11 +23,24 @@ from ..settings import settings
 from . import iden, talkgroups as tgmod
 
 
+# Per-protocol limits, verified in dvmhost source:
+#  P25 TGIDs 16-bit; DMR IDs 24-bit (CSBK/LC); NXDN unit/group IDs 16-bit (nxdn/lc/RTCH.cpp & 0xFFFF);
+#  channelNo 1..4095 (Host.Config.cpp), NXDN SiteData clamps channelNo to 1..1023 (common/nxdn/SiteData.h).
+#  Bandwidth: P25 Phase 1 / DMR 12.5 kHz; NXDN 6.25 kHz (dvmhost NXDN frames are 4800 baud = NXDN48;
+#  the 6.25 kHz iden bandwidth is OUR choice for NXDN rows - unverified whether dvmhost uses it).
+MODES = {
+    "p25": {"label": "P25", "bandwidth_khz": 12.5, "max_ch": 4095, "tg_max": 65535, "rid_max": 0xFFFFFF},
+    "dmr": {"label": "DMR", "bandwidth_khz": 12.5, "max_ch": 4095, "tg_max": 0xFFFFFF, "rid_max": 0xFFFFFF},
+    "nxdn": {"label": "NXDN", "bandwidth_khz": 6.25, "max_ch": 1023, "tg_max": 65535, "rid_max": 65535},
+}
+
+
 class Talkgroup(BaseModel):
-    tgid: int = Field(ge=1, le=65535)
+    tgid: int = Field(ge=1, le=0xFFFFFF)
     name: str = ""
     alias: str = ""
     parrot: bool = False
+    slot: int = Field(default=1, ge=1, le=2)  # talkgroup_rules source.slot ("DMR slot number")
 
 
 def _hex(v: str, lo: int, hi: int, what: str) -> str:
@@ -75,8 +88,44 @@ class WizardInput(BaseModel):
         Talkgroup(tgid=1, name="Talkgroup 1", alias="Tactical"),
         Talkgroup(tgid=9990, name="Parrot", alias="Parrot/Testing", parrot=True),
     ])
+    # DMR (system.config.colorCode / dmrNetId; network.slot1/slot2; protocols.dmr.beacons/control.slot)
+    color_code: int = Field(default=1, ge=0, le=15)
+    dmr_net_id: str = "1"
+    dmr_slot1: bool = True
+    dmr_slot2: bool = True
+    dmr_beacons: bool = False
+    dmr_tscc_slot: int = Field(default=1, ge=1, le=2)
+    # NXDN (system.config.ran)
+    ran: int = Field(default=1, ge=0, le=63)
     ack_license: bool = False
     ack_terms: bool = False
+
+    @field_validator("dmr_net_id")
+    @classmethod
+    def _dmrnet(cls, v):  # hex, clamped to $7F for the small site model (common/dmr/DMRUtils.h netId)
+        return _hex(v, 0x1, 0x7F, "DMR network ID")
+
+    @model_validator(mode="after")
+    def _per_mode(self):
+        m = MODES[self.mode]
+        for t in self.talkgroups:
+            if t.tgid > m["tg_max"]:
+                raise ValueError(f"{m['label']} talkgroup IDs must be 1-{m['tg_max']} (TG {t.tgid} is too large)")
+        if self.mode == "dmr":
+            if int(self.site_id, 16) > 0x1F:  # DMR SiteData small model: 5-bit site ID
+                raise ValueError("DMR site ID must be between 1 and 1F (hex) for the small site model")
+            pairs = [(t.tgid, t.slot) for t in self.talkgroups]
+            if len(pairs) != len(set(pairs)):
+                raise ValueError("Each DMR talkgroup/slot pair can only be listed once")
+            if not (self.dmr_slot1 or self.dmr_slot2):
+                raise ValueError("Enable at least one DMR timeslot")
+        else:
+            ids = [t.tgid for t in self.talkgroups]
+            if len(ids) != len(set(ids)):
+                raise ValueError("Each talkgroup ID can only be listed once")
+        if self.mode == "nxdn" and int(self.sys_id, 16) > 0x3FF:  # NXDN location ID uses sysId & 0x3FF
+            raise ValueError("NXDN system ID must be between 1 and 3FF (hex)")
+        return self
 
     @field_validator("nac")
     @classmethod
@@ -177,7 +226,7 @@ RPC_PORT = 9890  # RPC_DEFAULT_PORT in src/common/Defines.h
 def _common_host(h, *, ack_terms: bool, identity: str, callsign: str, peer_id: int, fne_address: str,
                  fne_port: int, fne_password: str, net_on: bool, sec: dict, plan_channel_id: int,
                  channel_no_hex: str, duplex: bool, simplex_same: bool, site: dict, modem: dict,
-                 info: dict, rpc_listen: str) -> None:
+                 info: dict, rpc_listen: str, mode: str = "p25") -> None:
     etc = settings.dvm_etc
     logdir = str(settings.dvm_log_dir)
     _set(h, "iAgreeNotToBeStupid", bool(ack_terms))
@@ -197,9 +246,10 @@ def _common_host(h, *, ack_terms: bool, identity: str, callsign: str, peer_id: i
     _set(h, "network.restAddress", "127.0.0.1")
     _set(h, "network.restPort", 9990)
     _set(h, "network.restPassword", sec["rest_password"])
-    _set(h, "protocols.dmr.enable", False)
-    _set(h, "protocols.p25.enable", True)
-    _set(h, "protocols.nxdn.enable", False)
+    # Exactly one protocol: Host.cpp kills the host when fixedMode is on with more than one enabled,
+    # and a dedicated DMR TSCC / P25 CC / NXDN CC forbids the other two.
+    for proto in ("dmr", "p25", "nxdn"):
+        _set(h, f"protocols.{proto}.enable", proto == mode)
     _set(h, "system.identity", identity[:32])
     _set(h, "system.duplex", duplex)
     _set(h, "system.simplexSameFrequency", simplex_same)
@@ -216,6 +266,16 @@ def _common_host(h, *, ack_terms: bool, identity: str, callsign: str, peer_id: i
     _set(h, "system.config.sysId", site["sys_id"])
     _set(h, "system.config.rfssId", site["rfss_id"])
     _set(h, "system.config.siteId", site["site_id"])
+    # DMR: colorCode (uint, DMRUtils clamps 0..15), dmrNetId (HEX string, $7F max for the small site model)
+    # NXDN: ran (uint). Verified in Host.Config.cpp; the NXDN location ID is computed by dvmhost from
+    # sysId/siteId (nxdn/Control.cpp) so there is no separate key for it.
+    _set(h, "system.config.colorCode", int(site.get("color_code", 1)))
+    _set(h, "system.config.dmrNetId", str(site.get("dmr_net_id", "1")))
+    _set(h, "system.config.ran", int(site.get("ran", 1)))
+    if mode == "dmr":
+        # network.slot1/slot2 (Host.Config.cpp): which DMR timeslots are carried over the network
+        _set(h, "network.slot1", bool(site.get("dmr_slot1", True)))
+        _set(h, "network.slot2", bool(site.get("dmr_slot2", True)))
     _set(h, "system.cwId.enable", True)
     _set(h, "system.cwId.callsign", callsign)
     _set(h, "system.modem.protocol.type", modem["type"])
@@ -224,6 +284,36 @@ def _common_host(h, *, ack_terms: bool, identity: str, callsign: str, peer_id: i
     _set(h, "system.iden_table.file", str(etc / "iden_table.dat"))
     _set(h, "system.radio_id.file", str(etc / "rid_acl.dat"))
     _set(h, "system.talkgroup_id.file", str(etc / "talkgroup_rules.yml"))
+
+
+def _control(h, mode: str, *, enable: bool, dedicated: bool, tscc_slot: int = 1, beacons: bool = False) -> None:
+    """Protocol control-channel keys (all present in config.example.yml):
+      P25:  protocols.p25.control.enable/dedicated
+      DMR:  protocols.dmr.control.enable/dedicated/slot (TSCC), protocols.dmr.beacons.enable
+      NXDN: protocols.nxdn.control.enable/dedicated
+    Control is only ever set for the selected protocol; the others are disabled outright."""
+    for proto in ("dmr", "p25", "nxdn"):
+        on = proto == mode
+        _set(h, f"protocols.{proto}.control.enable", on and enable)
+        _set(h, f"protocols.{proto}.control.dedicated", on and dedicated)
+    if mode == "dmr":
+        _set(h, "protocols.dmr.control.slot", int(tscc_slot))
+        # Host.cpp forces beacons on for a non-dedicated TSCC and kills the host for beacons+simplex.
+        _set(h, "protocols.dmr.beacons.enable", bool(beacons))
+    else:
+        _set(h, "protocols.dmr.beacons.enable", False)
+
+
+def site_dict(w: "WizardInput") -> dict:
+    return {"nac": w.nac, "wacn": w.wacn, "sys_id": w.sys_id, "rfss_id": w.rfss_id, "site_id": w.site_id,
+            "color_code": w.color_code, "dmr_net_id": w.dmr_net_id, "ran": w.ran,
+            "dmr_slot1": w.dmr_slot1, "dmr_slot2": w.dmr_slot2}
+
+
+def nxdn_location_id(sys_id_hex: str, site_id_hex: str) -> int:
+    """Same math as dvmhost nxdn/Control.cpp (category GLOBAL = 0):
+    locId = ((0 << 10) + (sysId & 0x3FF)) << 12 + (siteId & 0xFFF)."""
+    return ((int(sys_id_hex, 16) & 0x3FF) << 12) + (int(site_id_hex, 16) & 0xFFF)
 
 
 def _voice_list(h, entries: list[dict]) -> None:
@@ -257,24 +347,36 @@ def channel_step(entry: iden.IdenEntry) -> int:
     return max(1, round(entry.bandwidth_khz / entry.spacing_khz))
 
 
-def next_free_channel(cc_ch: int, used: set[int], step: int) -> int:
+def next_free_channel(cc_ch: int, used: set[int], step: int, max_ch: int = 4095) -> int:
     n = cc_ch + step
     while n in used:
         n += step
-    if n > 4095:
+    if n > max_ch:
         raise ValueError("No free channel numbers left on this identity row")
     return n
 
 
-def channel_for_freq(entry: iden.IdenEntry, tx_mhz: float) -> int:
+def channel_for_freq(entry: iden.IdenEntry, tx_mhz: float, max_ch: int = 4095) -> int:
     tx = iden.mhz_to_hz(tx_mhz)
     space = int(entry.spacing_khz * 1000)
     if (tx - entry.base_freq) % space:
         raise ValueError(f"{tx_mhz} MHz is not on the system's {entry.spacing_khz} kHz channel grid")
     ch = (tx - entry.base_freq) // space
-    if not 1 <= ch <= 4095:
+    if not 1 <= ch <= max_ch:
         raise ValueError(f"{tx_mhz} MHz is outside this system's band plan")
     return ch
+
+
+def _tg_dicts(mode: str, tgs) -> list[dict]:
+    """talkgroup_rules source.slot only matters for DMR (TalkgroupRulesLookup::find matches slot only
+    when slot != 0); we write 1 for P25/NXDN like the example file does."""
+    out = []
+    for t in tgs:
+        d = t.model_dump() if hasattr(t, "model_dump") else dict(t)
+        if mode != "dmr":
+            d["slot"] = 1
+        out.append(d)
+    return out
 
 
 def _rid_files(rid: Optional[dict]) -> tuple[str, bool]:
@@ -287,8 +389,7 @@ def _rid_files(rid: Optional[dict]) -> tuple[str, bool]:
 
 def generate(w: WizardInput, existing_secrets: Optional[dict[str, str]] = None,
              voice_channels: Optional[list[dict]] = None, rid: Optional[dict] = None) -> Generated:
-    if w.mode != "p25":
-        raise ValueError(f"{w.mode.upper()} is coming next - only P25 is supported in this version")
+    mi = MODES[w.mode]
     trunked = w.topology == "trunked"
     tdir = settings.template_dir
     etc = settings.dvm_etc
@@ -306,9 +407,12 @@ def generate(w: WizardInput, existing_secrets: Optional[dict[str, str]] = None,
         network_mode = "local_fne"
         warnings.append("Trunked control channel always runs the network hub (dvmfne) so voice channels can join.")
 
-    plan = iden.plan_conventional(w.tx_mhz, w.rx_mhz, tdir / "iden_table.example.dat")
+    plan = iden.plan_conventional(w.tx_mhz, w.rx_mhz, tdir / "iden_table.example.dat",
+                                  bandwidth_khz=mi["bandwidth_khz"], max_ch=mi["max_ch"])
     if trunked and plan.simplex_same_freq:
         raise ValueError("A trunked control channel needs a duplex frequency pair (different TX and RX).")
+    if w.mode == "dmr" and w.dmr_beacons and plan.simplex_same_freq and not trunked:
+        raise ValueError("DMR roaming beacons need a duplex frequency pair (dvmhost refuses beacons in simplex).")
     if not plan.reused_template_row:
         warnings.append(f"Created a custom identity-table row (id {plan.entry.channel_id}) so "
                         f"{w.tx_mhz:.5f} MHz is channel {plan.channel_no}.")
@@ -316,7 +420,7 @@ def generate(w: WizardInput, existing_secrets: Optional[dict[str, str]] = None,
         warnings.append("Simplex (same TX/RX frequency): duplex is turned off and simplexSameFrequency is on; "
                         "the iden offset is a non-zero placeholder because dvmhost rejects a 0 MHz offset.")
 
-    site = {"nac": w.nac, "wacn": w.wacn, "sys_id": w.sys_id, "rfss_id": w.rfss_id, "site_id": w.site_id}
+    site = site_dict(w)
     h = _yaml().load((tdir / "config.example.yml").read_text())
     _common_host(h, ack_terms=w.ack_terms, identity=(f"{w.system_name}-CC" if trunked else w.system_name),
                  callsign=w.callsign, peer_id=w.peer_id,
@@ -326,11 +430,11 @@ def generate(w: WizardInput, existing_secrets: Optional[dict[str, str]] = None,
                  duplex=plan.duplex, simplex_same=plan.simplex_same_freq, site=site,
                  modem={"type": w.modem_type, "port": w.modem_port, "speed": w.modem_speed},
                  info={"latitude": w.latitude, "longitude": w.longitude, "power_w": w.power_w, "location": w.location},
-                 rpc_listen="0.0.0.0" if trunked else "127.0.0.1")
+                 rpc_listen="0.0.0.0" if trunked else "127.0.0.1", mode=w.mode)
     vcs = sorted(voice_channels or [], key=lambda v: v["channelNo"])
     if trunked:
-        _set(h, "protocols.p25.control.enable", True)
-        _set(h, "protocols.p25.control.dedicated", True)
+        # dedicated control channel for the selected protocol (P25 CC / DMR TSCC / NXDN CC)
+        _control(h, w.mode, enable=True, dedicated=True, tscc_slot=w.dmr_tscc_slot)
         _set(h, "system.config.authoritative", True)
         _set(h, "system.config.supervisor", True)
         _set(h, "system.config.controlCh.rpcPort", 0)  # example: "left default for dedicated control channels"
@@ -341,8 +445,7 @@ def generate(w: WizardInput, existing_secrets: Optional[dict[str, str]] = None,
             warnings.append("No voice channels paired yet - dvmhost will not start on the control channel until "
                             "at least one voice-channel Pi joins (Trunking page).")
     else:
-        _set(h, "protocols.p25.control.enable", False)
-        _set(h, "protocols.p25.control.dedicated", False)
+        _control(h, w.mode, enable=False, dedicated=False, beacons=(w.mode == "dmr" and w.dmr_beacons))
         _set(h, "system.config.controlCh.rpcPort", 0)  # 0 = CC notifications disabled (conventional)
         # conventional: like the example, voiceChNo lists our own channel (must not be empty)
         _voice_list(h, [{"channelId": plan.entry.channel_id, "channelNo": plan.channel_no_hex,
@@ -350,7 +453,7 @@ def generate(w: WizardInput, existing_secrets: Optional[dict[str, str]] = None,
 
     files: dict[str, str] = {"config.yml": _dump(h)}
     files["iden_table.dat"] = iden.render_table(tdir / "iden_table.example.dat", [plan.entry])
-    tg_text = tgmod.build(tdir / "talkgroup_rules.example.yml", [t.model_dump() for t in w.talkgroups])
+    tg_text = tgmod.build(tdir / "talkgroup_rules.example.yml", _tg_dicts(w.mode, w.talkgroups))
     files["talkgroup_rules.yml"] = tg_text
     errors = [f"talkgroup_rules.yml: {e}" for e in tgmod.validate(tg_text, tdir / "talkgroup_rules.yaml_schema.json")
               if e != "schema not found; skipped"]
@@ -390,24 +493,50 @@ def generate(w: WizardInput, existing_secrets: Optional[dict[str, str]] = None,
         warnings.append("dvmhost will refuse to start until you accept the DVMProject terms (iAgreeNotToBeStupid).")
 
     e = plan.entry
+    radio = radio_info(w.mode, trunked, site, plan, e, vcs, _tg_dicts(w.mode, w.talkgroups),
+                       w.system_name, w.callsign, tscc_slot=w.dmr_tscc_slot)
+    return Generated(files=files, plan=plan, warnings=warnings, errors=errors, secrets=sec, radio=radio)
+
+
+MODE_TEXT = {
+    "p25": ("P25 Phase 1 trunked (FDMA, 12.5 kHz)", "P25 Phase 1 conventional (FDMA, 12.5 kHz)"),
+    "dmr": ("DMR Tier III trunked (TDMA 2-slot, 12.5 kHz)", "DMR Tier II conventional (TDMA 2-slot, 12.5 kHz)"),
+    "nxdn": ("NXDN trunked (NXDN48 4800 baud, 6.25 kHz)", "NXDN conventional (NXDN48 4800 baud, 6.25 kHz)"),
+}
+
+
+def radio_info(mode: str, trunked: bool, site: dict, plan, e, vcs: list[dict], tgs: list[dict],
+               system_name: str, callsign: str, tscc_slot: int = 1) -> dict:
+    """Values for the Program-radio page, per protocol."""
     radio = {
+        "protocol": mode,
         "trunked": trunked,
-        "mode": "P25 Phase 1 trunked (FDMA, 12.5 kHz)" if trunked else "P25 Phase 1 conventional (FDMA, 12.5 kHz)",
+        "mode": MODE_TEXT[mode][0 if trunked else 1],
+        "channelNo": plan.channel_no,
         "radio_rx_mhz": plan.tx_hz / 1e6,
         "radio_tx_mhz": plan.rx_hz / 1e6,
         "offset_mhz": (plan.rx_hz - plan.tx_hz) / 1e6,
-        "nac_hex": w.nac, "nac_dec": int(w.nac, 16),
-        "wacn": w.wacn, "sys_id": w.sys_id, "rfss_id": w.rfss_id, "site_id": w.site_id,
+        "nac_hex": site["nac"], "nac_dec": int(site["nac"], 16),
+        "wacn": site["wacn"], "sys_id": site["sys_id"], "rfss_id": site["rfss_id"], "site_id": site["site_id"],
         "band_plan": {"iden": e.channel_id, "base_mhz": e.base_freq / 1e6, "spacing_khz": e.spacing_khz,
                       "offset_mhz": e.offset_mhz, "bandwidth_khz": e.bandwidth_khz},
         "voice_channels": [{"name": v["name"], "channelNo": v["channelNo"],
                             "tx_mhz": e.tx_for(v["channelNo"]) / 1e6, "rx_mhz": e.rx_for(v["channelNo"]) / 1e6}
                            for v in vcs],
-        "talkgroups": [t.model_dump() for t in w.talkgroups],
-        "system_name": w.system_name,
-        "callsign": w.callsign,
+        "talkgroups": tgs,
+        "system_name": system_name,
+        "callsign": callsign,
     }
-    return Generated(files=files, plan=plan, warnings=warnings, errors=errors, secrets=sec, radio=radio)
+    if mode == "dmr":
+        radio["dmr"] = {"color_code": int(site.get("color_code", 1)), "net_id": site.get("dmr_net_id", "1"),
+                        "site_id": site["site_id"],
+                        "slots": [n for n in (1, 2) if site.get(f"dmr_slot{n}", True)],
+                        "tscc_slot": tscc_slot if trunked else None}
+    if mode == "nxdn":
+        loc = nxdn_location_id(site["sys_id"], site["site_id"])
+        radio["nxdn"] = {"ran": int(site.get("ran", 1)), "sys_id": site["sys_id"], "site_id": site["site_id"],
+                         "location_id": loc, "location_id_hex": format(loc, "06X")}
+    return radio
 
 
 class VoiceLocal(BaseModel):
@@ -428,6 +557,9 @@ def generate_voice_channel(bundle: dict, local: VoiceLocal, rest_password: Optio
     ch = int(bundle["channelNo"])
     tx, rx = entry.tx_for(ch), entry.rx_for(ch)
     plan = iden.ChannelPlan(entry, ch, True, False, tx, rx, False)
+    mode = bundle.get("mode", "p25")  # bundles from <=0.3.5 control Pis carry no mode (P25 only then)
+    if mode not in MODES:
+        raise ValueError(f"Unknown protocol {mode!r} in pairing bundle")
     h = _yaml().load((tdir / "config.example.yml").read_text())
     _common_host(h, ack_terms=local.ack_terms, identity=f"{bundle['system_name']}-VC{ch}", callsign=bundle["callsign"],
                  peer_id=bundle["network"]["peerId"], fne_address=bundle["network"]["address"],
@@ -435,9 +567,9 @@ def generate_voice_channel(bundle: dict, local: VoiceLocal, rest_password: Optio
                  sec=sec, plan_channel_id=entry.channel_id, channel_no_hex=format(ch, "X"),
                  duplex=True, simplex_same=False, site=bundle["site"],
                  modem={"type": local.modem_type, "port": local.modem_port, "speed": local.modem_speed},
-                 info={"location": bundle.get("location")}, rpc_listen="0.0.0.0")
-    _set(h, "protocols.p25.control.enable", False)
-    _set(h, "protocols.p25.control.dedicated", False)
+                 info={"location": bundle.get("location")}, rpc_listen="0.0.0.0", mode=mode)
+    # voice channel: protocol on, no control channel, no DMR beacons; grants arrive from the CC via RPC
+    _control(h, mode, enable=False, dedicated=False, beacons=False)
     _set(h, "system.config.authoritative", False)
     _set(h, "system.config.supervisor", False)
     _set(h, "system.config.controlCh.rpcAddress", bundle["rpc"]["address"])
@@ -450,12 +582,14 @@ def generate_voice_channel(bundle: dict, local: VoiceLocal, rest_password: Optio
     rid_text, lockdown = _rid_files(bundle.get("rid"))
     _set(h, "system.radio_id.acl", lockdown)
     files = {"config.yml": _dump(h), "iden_table.dat": bundle["iden_table"],
-             "talkgroup_rules.yml": tgmod.build(tdir / "talkgroup_rules.example.yml", bundle["talkgroups"]),
+             "talkgroup_rules.yml": tgmod.build(tdir / "talkgroup_rules.example.yml",
+                                                _tg_dicts(mode, bundle["talkgroups"])),
              "rid_acl.dat": rid_text}
     warnings = []
     if not local.ack_terms:
         warnings.append("dvmhost will refuse to start until you accept the DVMProject terms (iAgreeNotToBeStupid).")
-    radio = {"trunked": True, "voice_channel": True, "channelNo": ch, "tx_mhz": tx / 1e6, "rx_mhz": rx / 1e6}
+    radio = {"trunked": True, "voice_channel": True, "protocol": mode, "mode": MODE_TEXT[mode][0],
+             "channelNo": ch, "tx_mhz": tx / 1e6, "rx_mhz": rx / 1e6}
     return Generated(files=files, plan=plan, warnings=warnings, errors=[], secrets=sec, radio=radio)
 
 

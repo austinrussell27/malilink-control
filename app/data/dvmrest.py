@@ -4,12 +4,14 @@ Verified in src/host/restapi/RESTAPI.cpp + RESTDefines.h (and src/fne/restapi/*)
   PUT  /auth   body {"auth": "<hex sha256 of restPassword>"} -> {"status":200,"token":"<n>"}
   then header  X-DVM-Auth-Token: <token>  on every request (401 -> re-auth)
   GET  /version, /status, /voice-ch, /p25/report-affiliations        (dvmhost)
+  GET  /dmr/report-affiliations, /nxdn/report-affiliations           (dvmhost; {"affiliations":[{srcId,grpId}]})
   GET  /version, /status, /peer/query, /report-affiliations, /stats  (dvmfne)
 Plain HTTP unless restSsl=true.
 
 SAFETY: this client deliberately exposes GET + /auth only. Endpoints that can key the
 transmitter or change RF behaviour (/mdm/mode, /grant-tg, /p25/rid, /p25/raw-tsbk,
-/p25/cc-broadcast, /dmr/beacon, ...) are intentionally NOT implemented.
+/p25/cc-broadcast, /dmr/beacon, /dmr/cc-enable, /dmr/cc-broadcast, /dmr/rid, /nxdn/cc,
+/nxdn/cc-enable, ...) are intentionally NOT implemented.
 """
 from __future__ import annotations
 
@@ -18,7 +20,7 @@ import threading
 
 import httpx
 
-READ_ONLY_PATHS = {"/version", "/status", "/voice-ch", "/p25/report-affiliations",
+READ_ONLY_PATHS = {"/version", "/status", "/voice-ch", "/p25/report-affiliations", "/dmr/report-affiliations", "/nxdn/report-affiliations",
                    "/peer/query", "/report-affiliations", "/stats", "/peer/count"}
 
 

@@ -1,8 +1,19 @@
 (() => {
   let step = 0; const N = 10;
   const choice = {mode: "p25", topology: "conventional", network_mode: "local_fne", purpose: "new"};
-  let tgs = [{tgid: 1, name: "Talkgroup 1", alias: "Tactical", parrot: false},
-             {tgid: 9990, name: "Parrot", alias: "Parrot/Testing", parrot: true}];
+  let tgs = [{tgid: 1, name: "Talkgroup 1", alias: "Tactical", parrot: false, slot: 1},
+             {tgid: 9990, name: "Parrot", alias: "Parrot/Testing", parrot: true, slot: 1}];
+  // Per-protocol limits (mirror app/configgen/generate.py MODES; verified in dvmhost source)
+  const MODES = {
+    p25: {label: "P25", tgMax: 65535, siteMax: 0xFE, sysMax: 0xFFE},
+    dmr: {label: "DMR", tgMax: 16777215, siteMax: 0x1F, sysMax: 0xFFE},
+    nxdn: {label: "NXDN", tgMax: 65535, siteMax: 0xFE, sysMax: 0x3FF},
+  };
+  const MODE_NOTES = {
+    p25: "",
+    dmr: "DMR: conventional = Tier II repeater/hotspot with a color code and two timeslots. Trunked = dvmhost's Tier III-style TSCC dedicated control channel that grants voice channels on paired Pis. Trunked DMR needs radios that support DMR Tier III trunking; dvmhost's DMR trunking is less widely used than P25 — test it on the bench first.",
+    nxdn: "NXDN: NXDN48 (4800 bps, 6.25 kHz — dvmhost uses 384-bit NXDN48 frames; NXDN96 is not supported). Trunked = dvmhost's NXDN dedicated control channel. Honest note: the dvmhost config generator only ships P25/DMR trunking templates, so NXDN trunking is less exercised upstream — test it on the bench first. NXDN unit and talkgroup IDs are 16-bit (1–65535) and channel numbers stop at 1023.",
+  };
   let preview = null, curFile = null, presetRids = null;
 
   function show(n) {
@@ -20,13 +31,68 @@
   $("#back").onclick = () => show(step - 1);
   $("#next").onclick = () => { if (validateStep()) show(step + 1); };
 
+  const hexIn = (v, lo, hi) => { const s = String(v).trim().replace(/^(0x|\$)/i, ""); if (!/^[0-9a-f]+$/i.test(s)) return false; const n = parseInt(s, 16); return n >= lo && n <= hi; };
   function validateStep() {
     $$(".err", $(`.panel[data-step="${step}"]`)).forEach(e => e.remove());
     const need = {3: ["system_name", "callsign"], 4: ["tx_mhz", "rx_mhz"]}[step] || [];
     let ok = true;
-    for (const id of need) { const el = $("#" + id); if (!el.value.trim()) { ok = false; el.insertAdjacentHTML("afterend", `<div class="err">Required</div>`); } }
+    const bad = (id, msg) => { ok = false; $("#" + id).insertAdjacentHTML("afterend", `<div class="err">${esc(msg)}</div>`); };
+    for (const id of need) { const el = $("#" + id); if (!el.value.trim()) bad(id, "Required"); }
+    if (step === 5) {
+      const m = MODES[choice.mode];
+      if (!hexIn($("#site_id").value, 1, m.siteMax)) bad("site_id", `Hex 1–${m.siteMax.toString(16).toUpperCase()}`);
+      if (choice.mode === "p25") {
+        if (!hexIn($("#nac").value, 0, 0xFFF)) bad("nac", "Hex 0–FFF");
+        if (!hexIn($("#sys_id").value, 1, m.sysMax)) bad("sys_id", "Hex 1–FFE");
+      }
+      if (choice.mode === "dmr") {
+        const cc = +$("#color_code").value; if (!(cc >= 0 && cc <= 15)) bad("color_code", "0–15");
+        if (!hexIn($("#dmr_net_id").value, 1, 0x7F)) bad("dmr_net_id", "Hex 1–7F");
+        if (!$("#dmr_slot1").checked && !$("#dmr_slot2").checked) bad("dmr_slot2", "Pick at least one timeslot");
+      }
+      if (choice.mode === "nxdn") {
+        const r = $("#ran").value.trim(); if (!/^\d+$/.test(r) || +r > 63) bad("ran", "0–63");
+        if (!hexIn($("#sys_id").value, 1, 0x3FF)) bad("sys_id", "Hex 1–3FF for NXDN");
+      }
+    }
+    if (step === 8) {
+      const m = MODES[choice.mode], seen = new Set();
+      for (const t of tgs) {
+        if (!(t.tgid >= 1 && t.tgid <= m.tgMax)) { ok = false; $("#tgNote").innerHTML = `<span class="err">${m.label} talkgroup IDs must be 1–${m.tgMax} (TG ${esc(t.tgid)}).</span>`; break; }
+        const k = choice.mode === "dmr" ? `${t.tgid}/${t.slot || 1}` : `${t.tgid}`;
+        if (seen.has(k)) { ok = false; $("#tgNote").innerHTML = `<span class="err">Talkgroup ${esc(t.tgid)} is listed twice${choice.mode === "dmr" ? " on the same slot" : ""}.</span>`; break; }
+        seen.add(k);
+      }
+      if (ok) tgNote();
+    }
     return ok;
   }
+
+  // protocol branching
+  function nxdnLoc() {
+    const s = parseInt($("#sys_id").value, 16), t = parseInt($("#site_id").value, 16);
+    if (isNaN(s) || isNaN(t)) { $("#nxdnLoc").textContent = "NXDN location ID: enter hex system and site IDs."; return; }
+    const loc = ((s & 0x3FF) * 4096) + (t & 0xFFF);  // dvmhost nxdn/Control.cpp, category GLOBAL
+    $("#nxdnLoc").innerHTML = `NXDN location ID (computed by dvmhost from system &amp; site ID): <b class="mono">${loc}</b> <span class="muted">(hex ${loc.toString(16).toUpperCase().padStart(6, "0")})</span>`;
+  }
+  function tgNote() {
+    $("#tgNote").innerHTML = choice.mode === "dmr" ? "DMR: each talkgroup is tied to a timeslot (<code>source.slot</code> in talkgroup_rules.yml). The same TG can be listed on both slots."
+      : choice.mode === "nxdn" ? "NXDN group IDs are 16-bit (1–65535)." : "";
+  }
+  function applyMode() {
+    const m = choice.mode;
+    $$("[data-proto]").forEach(el => el.hidden = !el.dataset.proto.split(" ").includes(m));
+    $("#idsProto").textContent = MODES[m].label;
+    $("#siteHint").textContent = `Hex 1–${MODES[m].siteMax.toString(16).toUpperCase()}${m === "dmr" ? " (DMR small site model)" : ""}.`;
+    $("#sysHint").textContent = m === "nxdn" ? "Hex 1–3FF (NXDN uses 10 bits)." : "Hex 1–FFE.";
+    $("#modeNote").hidden = !MODE_NOTES[m]; $("#modeNote").textContent = MODE_NOTES[m];
+    $("#tsccSlotField").hidden = !(m === "dmr" && choice.topology === "trunked");
+    $("#beaconField").hidden = !(m === "dmr" && choice.topology !== "trunked");
+    $$(".slotcol").forEach(el => el.hidden = m !== "dmr");
+    nxdnLoc(); tgNote(); renderTgs();
+  }
+  function setChoice(g, v) { choice[g] = v; $$(`[data-group="${g}"] .choice`).forEach(c => c.classList.toggle("sel", c.dataset.val === v)); }
+  $("#sys_id").addEventListener("input", nxdnLoc); $("#site_id").addEventListener("input", nxdnLoc);
 
   // choice cards
   $$(".choices").forEach(g => $$(".choice", g).forEach(c => c.onclick = (ev) => {
@@ -36,6 +102,7 @@
     choice[g.dataset.group] = c.dataset.val;
     if (g.dataset.group === "network_mode") $("#remoteFields").hidden = c.dataset.val !== "remote_fne";
     if (g.dataset.group === "topology") applyTopology();
+    if (g.dataset.group === "mode") { applyMode(); calc(); }
     if (g.dataset.group === "purpose") { $("#joinBox").hidden = c.dataset.val !== "voice"; $("#presetBox").hidden = c.dataset.val === "voice"; show(0); }
   }));
   function applyTopology() {
@@ -43,29 +110,33 @@
     $("#ccTag").hidden = !t; $("#trunkNet").hidden = !t;
     $$('[data-group="network_mode"] .choice').forEach(c => c.classList.toggle("off", t && c.dataset.val !== "local_fne"));
     if (t) { choice.network_mode = "local_fne"; $$('[data-group="network_mode"] .choice').forEach(c => c.classList.toggle("sel", c.dataset.val === "local_fne")); $("#remoteFields").hidden = true; }
+    $("#tsccSlotField").hidden = !(choice.mode === "dmr" && t);
+    $("#beaconField").hidden = !(choice.mode === "dmr" && !t);
   }
 
   // talkgroups
   function renderTgs() {
+    const dmr = choice.mode === "dmr";
     $("#tgBody").innerHTML = tgs.map((t, i) => `<tr>
-      <td><input type="number" min="1" max="65535" value="${esc(t.tgid)}" data-i="${i}" data-k="tgid"></td>
+      <td><input type="number" min="1" max="${MODES[choice.mode].tgMax}" value="${esc(t.tgid)}" data-i="${i}" data-k="tgid"></td>
+      ${dmr ? `<td><select data-i="${i}" data-k="slot"><option value="1" ${(t.slot || 1) == 1 ? "selected" : ""}>TS1</option><option value="2" ${t.slot == 2 ? "selected" : ""}>TS2</option></select></td>` : ""}
       <td><input value="${esc(t.name)}" data-i="${i}" data-k="name"></td>
       <td><input value="${esc(t.alias)}" data-i="${i}" data-k="alias"></td>
       <td><input type="checkbox" ${t.parrot ? "checked" : ""} data-i="${i}" data-k="parrot" style="width:auto"></td>
       <td><button class="btn danger" type="button" data-del="${i}" aria-label="Remove">✕</button></td></tr>`).join("");
-    $$("#tgBody input").forEach(inp => inp.oninput = inp.onchange = () => {
+    $$("#tgBody input, #tgBody select").forEach(inp => inp.oninput = inp.onchange = () => {
       const t = tgs[+inp.dataset.i], k = inp.dataset.k;
-      t[k] = k === "parrot" ? inp.checked : k === "tgid" ? +inp.value : inp.value; });
+      t[k] = k === "parrot" ? inp.checked : (k === "tgid" || k === "slot") ? +inp.value : inp.value; });
     $$("#tgBody [data-del]").forEach(b => b.onclick = () => { tgs.splice(+b.dataset.del, 1); renderTgs(); });
   }
-  $("#tgAdd").onclick = () => { tgs.push({tgid: (Math.max(0, ...tgs.map(t => t.tgid).filter(x => x < 9990)) + 1), name: "", alias: "", parrot: false}); renderTgs(); };
+  $("#tgAdd").onclick = () => { tgs.push({tgid: (Math.max(0, ...tgs.map(t => t.tgid).filter(x => x < 9990)) + 1), name: "", alias: "", parrot: false, slot: 1}); renderTgs(); };
 
   // frequency helper
   async function calc() {
     const tx = +$("#tx_mhz").value, rx = +$("#rx_mhz").value, box = $("#freqCalc");
     if (!tx || !rx) { box.hidden = true; return; }
     try {
-      const r = await api("/api/calc/freq", {method: "POST", body: {tx_mhz: tx, rx_mhz: rx}});
+      const r = await api("/api/calc/freq", {method: "POST", body: {tx_mhz: tx, rx_mhz: rx, mode: choice.mode}});
       box.hidden = false;
       box.innerHTML = r.simplex ? `Simplex: same frequency in and out (hotspot style). Channel ${r.channelId}-${r.channelNo}.`
         : `Duplex repeater, offset <b>${r.offset_mhz > 0 ? "+" : ""}${r.offset_mhz.toFixed(4)} MHz</b>. Will use identity row <code>${esc(r.iden_line)}</code>, channel ${r.channelId}-${r.channelNo}.`;
@@ -81,11 +152,14 @@
       latitude: +v("latitude") || 0, longitude: +v("longitude") || 0, power_w: +v("power_w") || 0,
       tx_mhz: +v("tx_mhz"), rx_mhz: +v("rx_mhz"),
       nac: v("nac"), site_id: v("site_id"), wacn: v("wacn"), sys_id: v("sys_id"), rfss_id: v("rfss_id"),
+      color_code: +v("color_code"), dmr_net_id: v("dmr_net_id"), ran: v("ran") === "" ? 1 : +v("ran"),
+      dmr_slot1: $("#dmr_slot1").checked, dmr_slot2: $("#dmr_slot2").checked,
+      dmr_beacons: $("#dmr_beacons").checked, dmr_tscc_slot: +v("dmr_tscc_slot"),
       modem_type: v("modem_type"), modem_port: v("modem_port"), modem_speed: +v("modem_speed"),
       fne_address: v("fne_address"), fne_port: +v("fne_port"), fne_password: v("fne_password"), peer_id: +v("peer_id"),
       fne_peer_id: +v("fne_peer_id") || null, vc_peer_start: +v("vc_peer_start") || null,
       ...(presetRids ? {radios: presetRids.radios, rid_lockdown: presetRids.lockdown} : {}),
-      talkgroups: tgs.filter(t => t.tgid),
+      talkgroups: tgs.filter(t => t.tgid).map(t => ({...t, slot: choice.mode === "dmr" ? (t.slot || 1) : 1})),
       ack_license: $("#ack_license").checked, ack_terms: $("#ack_terms").checked,
     };
   }
@@ -96,12 +170,27 @@
       preview = await api("/api/wizard/preview", {method: "POST", body: payload()});
       $("#reviewWarn").innerHTML = preview.warnings.map(w => `<div class="notice blue small" style="margin-bottom:8px">${esc(w)}</div>`).join("")
         + preview.errors.map(w => `<div class="notice small" style="margin-bottom:8px">${esc(w)}</div>`).join("");
+      reviewSummary(preview.radio);
       const names = Object.keys(preview.files); curFile = curFile && names.includes(curFile) ? curFile : names[0];
       $("#fileTabs").innerHTML = names.map(n => `<button type="button" class="${n === curFile ? "on" : ""}" data-f="${n}">${n}</button>`).join("");
       $$("#fileTabs button").forEach(b => b.onclick = () => { curFile = b.dataset.f; doPreview(); });
       $("#fileView").textContent = preview.files[curFile];
       $("#target").innerHTML = `Files will be written to <code>${esc(preview.target_dir)}</code>${preview.dry_run ? " (dry-run folder — nothing on the system is changed)" : ""}. Existing files are backed up as <code>*.bak</code>.`;
     } catch (e) { $("#reviewErr").hidden = false; $("#reviewErr").textContent = "Please fix: " + e.message; $("#fileView").textContent = ""; }
+  }
+
+  function reviewSummary(r) {
+    const box = $("#reviewSummary"); if (!r) { box.hidden = true; return; }
+    const row = (k, v) => `<tr><td class="muted">${esc(k)}</td><td class="mono">${v}</td></tr>`;
+    let rows = row("Mode", esc(r.mode)) + row("Radio RX / TX", `${r.radio_rx_mhz.toFixed(5)} / ${r.radio_tx_mhz.toFixed(5)} MHz`)
+      + row("Channel", `${r.band_plan.iden}-${r.channelNo} (bw ${r.band_plan.bandwidth_khz} kHz)`);
+    if (r.protocol === "p25") rows += row("NAC", esc(r.nac_hex)) + (r.trunked ? row("WACN / Sys / RFSS / Site", `${esc(r.wacn)} / ${esc(r.sys_id)} / ${esc(r.rfss_id)} / ${esc(r.site_id)}`) : "");
+    if (r.dmr) rows += row("Color code", r.dmr.color_code) + row("Network timeslots", r.dmr.slots.map(s => "TS" + s).join(" + "))
+      + row("DMR net / site ID", `${esc(r.dmr.net_id)} / ${esc(r.dmr.site_id)}`) + (r.dmr.tscc_slot ? row("TSCC slot", r.dmr.tscc_slot) : "");
+    if (r.nxdn) rows += row("RAN", r.nxdn.ran) + row("System / site ID", `${esc(r.nxdn.sys_id)} / ${esc(r.nxdn.site_id)}`)
+      + row("Location ID", `${r.nxdn.location_id} (hex ${esc(r.nxdn.location_id_hex)})`);
+    rows += row("Talkgroups", r.talkgroups.map(t => esc(t.tgid) + (r.protocol === "dmr" ? ` (TS${t.slot})` : "")).join(", ") || "—");
+    box.hidden = false; box.innerHTML = `<h3 style="margin-top:0">Summary</h3><table class="t">${rows}</table>`;
   }
 
   $("#saveBtn").onclick = async () => {
@@ -160,11 +249,11 @@
   });
   api("/api/wizard/current").then(w => {
     if (!w || !w.system_name) return;
-    for (const [k, v] of Object.entries(w)) { const el = $("#" + k); if (el && el.type !== "checkbox" && v != null) el.value = v; }
+    for (const [k, v] of Object.entries(w)) { const el = $("#" + k); if (!el || v == null) continue; if (el.type === "checkbox") { if (k.startsWith("dmr_")) el.checked = !!v; } else el.value = v; }
     if (w.talkgroups) tgs = w.talkgroups;
-    for (const g of ["network_mode", "topology"]) { if (w[g]) { choice[g] = w[g]; $$(`[data-group="${g}"] .choice`).forEach(c => c.classList.toggle("sel", c.dataset.val === w[g])); } }
+    for (const g of ["mode", "network_mode", "topology"]) { if (w[g]) { choice[g] = w[g]; $$(`[data-group="${g}"] .choice`).forEach(c => c.classList.toggle("sel", c.dataset.val === w[g])); } }
     $("#remoteFields").hidden = choice.network_mode !== "remote_fne";
-    applyTopology(); renderTgs();
+    applyTopology(); applyMode();
   });
   $("#joinBtn").onclick = async () => {
     $("#joinMsg").textContent = "Contacting control Pi…";
@@ -193,7 +282,7 @@
     const cc = dec ? PREV.ccDec : PREV.cc;
     for (const k of ["system_name", "callsign", "wacn", "sys_id", "nac", "rfss_id", "site_id", "peer_id", "fne_peer_id", "vc_peer_start"]) $("#" + k).value = PREV[k];
     $("#tx_mhz").value = fmtF(chMHz(cc)); $("#rx_mhz").value = fmtF(chMHz(cc) + 5);
-    choice.mode = "p25"; choice.topology = "trunked";
+    setChoice("mode", "p25"); applyMode(); choice.topology = "trunked";
     $$('[data-group="topology"] .choice').forEach(c => c.classList.toggle("sel", c.dataset.val === "trunked"));
     applyTopology();
     tgs = [{tgid: 101, name: "ML105 Main", alias: "ML105 Main", parrot: false}]; renderTgs();
@@ -204,5 +293,5 @@
   $("#jPreset").onclick = () => {
     $("#j_tx").value = localStorage.getItem("ml_prev_vc_mhz") || fmtF(chMHz(PREV.vc)); $("#j_peer").value = PREV.vc_peer_start;
   };
-  renderTgs(); poll(); show(0);
+  applyMode(); poll(); show(0);
 })();

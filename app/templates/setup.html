@@ -85,9 +85,10 @@
     <h3>Digital mode</h3>
     <div class="choices" data-group="mode">
       <div class="choice sel" data-val="p25"><b>P25</b><span class="muted small">Project 25 Phase 1. Works with most public-service-style radios.</span></div>
-      <div class="choice off" data-val="dmr"><span class="pill gray tag">coming next</span><b>DMR</b><span class="muted small">Color codes, two timeslots.</span></div>
-      <div class="choice off" data-val="nxdn"><span class="pill gray tag">coming next</span><b>NXDN</b><span class="muted small">Kenwood/Icom narrow digital.</span></div>
+      <div class="choice" data-val="dmr"><b>DMR</b><span class="muted small">Tier II conventional (color code, two timeslots) or Tier III trunked (TSCC control channel).</span></div>
+      <div class="choice" data-val="nxdn"><b>NXDN</b><span class="muted small">Kenwood/Icom narrow digital (NXDN48, 6.25 kHz). RAN instead of NAC.</span></div>
     </div>
+    <div class="notice blue small" id="modeNote" style="margin-top:10px" hidden></div>
     <h3 style="margin-top:20px">Layout</h3>
     <div class="choices" data-group="topology">
       <div class="choice sel" data-val="conventional"><b>Conventional</b><span class="muted small">One repeater or hotspot on one frequency pair. Best place to start.</span></div>
@@ -120,18 +121,31 @@
     <p class="hint">Make sure these frequencies are allowed by your license and coordinated where required.</p>
   </section>
 
-  <!-- 4 IDS -->
+  <!-- 4 IDS (per protocol; keys verified in dvmhost Host.Config.cpp) -->
   <section class="panel" data-step="5">
-    <h2>System IDs</h2>
-    <p class="muted">The NAC is like a "tone" for P25 — your radios must use the same one. Defaults are fine for a single site.</p>
+    <h2>System IDs <span class="pill amber" id="idsProto">P25</span></h2>
+    <p class="muted" data-proto="p25">The NAC is like a "tone" for P25 — your radios must use the same one. Defaults are fine for a single site.</p>
+    <p class="muted" data-proto="dmr" hidden>The <b>color code</b> is DMR's "tone" — radios must use the same one. DMR has two timeslots on one frequency; you can carry either or both.</p>
+    <p class="muted" data-proto="nxdn" hidden>The <b>RAN</b> (Radio Access Number) is NXDN's "tone" — radios must use the same one.</p>
     <div class="grid g2">
-      <div class="field"><label for="nac">NAC (hex)</label><input id="nac" name="nac" value="293" class="mono"><div class="hint">3 hex digits, e.g. 293. Avoid F7E/F7F (special "receive any" values).</div></div>
-      <div class="field"><label for="site_id">Site ID (hex)</label><input id="site_id" name="site_id" value="1" class="mono"></div>
+      <div class="field" data-proto="p25"><label for="nac">NAC (hex)</label><input id="nac" name="nac" value="293" class="mono"><div class="hint">3 hex digits, e.g. 293. Avoid F7E/F7F (special "receive any" values).</div></div>
+      <div class="field" data-proto="dmr" hidden><label for="color_code">Color code</label><select id="color_code" name="color_code">{% for i in range(16) %}<option value="{{ i }}" {% if i == 1 %}selected{% endif %}>{{ i }}</option>{% endfor %}</select><div class="hint">0–15 (<code>system.config.colorCode</code>).</div></div>
+      <div class="field" data-proto="nxdn" hidden><label for="ran">RAN</label><input id="ran" name="ran" type="number" min="0" max="63" value="1"><div class="hint">0–63 (<code>system.config.ran</code>).</div></div>
+      <div class="field"><label for="site_id">Site ID (hex)</label><input id="site_id" name="site_id" value="1" class="mono"><div class="hint" id="siteHint">1–FE.</div></div>
+      <div class="field" data-proto="p25 nxdn"><label for="sys_id">System ID (hex)</label><input id="sys_id" name="sys_id" value="001" class="mono"><div class="hint" id="sysHint">1–FFE.</div></div>
+      <div class="field" data-proto="dmr" hidden><label for="dmr_net_id">DMR network ID (hex)</label><input id="dmr_net_id" name="dmr_net_id" value="1" class="mono"><div class="hint">1–7F (small site model; <code>system.config.dmrNetId</code>).</div></div>
     </div>
-    <details><summary class="muted" style="cursor:pointer">Advanced (only matters for trunking / multi-site)</summary>
+    <div data-proto="nxdn" hidden class="notice blue small" id="nxdnLoc">NXDN location ID is computed by dvmhost from the system and site IDs.</div>
+    <div data-proto="dmr" hidden>
+      <h3 style="margin-top:14px">Timeslots</h3>
+      <label class="check"><input type="checkbox" id="dmr_slot1" checked> Carry timeslot 1 over the network (<code>network.slot1</code>)</label>
+      <label class="check"><input type="checkbox" id="dmr_slot2" checked> Carry timeslot 2 over the network (<code>network.slot2</code>)</label>
+      <div class="field" id="tsccSlotField" style="margin-top:10px;max-width:280px" hidden><label for="dmr_tscc_slot">TSCC (control) timeslot</label><select id="dmr_tscc_slot"><option value="1">Slot 1</option><option value="2">Slot 2</option></select><div class="hint"><code>protocols.dmr.control.slot</code> on the dedicated control channel.</div></div>
+      <label class="check" id="beaconField" style="margin-top:8px"><input type="checkbox" id="dmr_beacons"> Send DMR roaming beacons (<code>protocols.dmr.beacons.enable</code>; needs a duplex repeater, refused in simplex)</label>
+    </div>
+    <details data-proto="p25"><summary class="muted" style="cursor:pointer">Advanced (only matters for trunking / multi-site)</summary>
       <div class="grid g3" style="margin-top:12px">
         <div class="field"><label for="wacn">WACN / Network ID (hex)</label><input id="wacn" name="wacn" value="BB800" class="mono"></div>
-        <div class="field"><label for="sys_id">System ID (hex)</label><input id="sys_id" name="sys_id" value="001" class="mono"></div>
         <div class="field"><label for="rfss_id">RFSS ID (hex)</label><input id="rfss_id" name="rfss_id" value="1" class="mono"></div>
       </div>
     </details>
@@ -176,7 +190,8 @@
   <section class="panel" data-step="8">
     <h2>Talkgroups</h2>
     <p class="muted">Talkgroups are like channels inside your system. A "parrot" talkgroup plays your transmission back to you — great for testing.</p>
-    <table class="tgtable"><thead><tr><th style="width:110px">TG ID</th><th>Name</th><th>Description</th><th>Parrot</th><th></th></tr></thead><tbody id="tgBody"></tbody></table>
+    <p class="muted small" id="tgNote"></p>
+    <table class="tgtable"><thead><tr><th style="width:110px">TG ID</th><th class="slotcol" hidden style="width:90px">Slot</th><th>Name</th><th>Description</th><th>Parrot</th><th></th></tr></thead><tbody id="tgBody"></tbody></table>
     <button class="btn" type="button" id="tgAdd" style="margin-top:8px">+ Add talkgroup</button>
   </section>
 
@@ -185,6 +200,7 @@
     <h2>Review & save</h2>
     {% include "_unpair.html" %}
     <div id="reviewErr" class="notice" hidden></div>
+    <div id="reviewSummary" class="card" style="background:var(--panel2);margin-bottom:12px" hidden></div>
     <div id="reviewWarn"></div>
     <div class="tabs" id="fileTabs"></div>
     <pre class="file mono" id="fileView">Generating…</pre>

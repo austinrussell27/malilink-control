@@ -28,7 +28,7 @@ class IdenEntry:
     bandwidth_khz: float
 
     def line(self) -> str:
-        return f"{self.channel_id},{self.base_freq},{self.spacing_khz:.2f},{self.offset_mhz:.5f},{self.bandwidth_khz:.1f},"
+        return f"{self.channel_id},{self.base_freq},{self.spacing_khz:.2f},{self.offset_mhz:.5f},{self.bandwidth_khz:g},"
 
     def tx_for(self, ch_no: int) -> int:
         space = int(self.spacing_khz / 0.125)
@@ -70,7 +70,8 @@ def mhz_to_hz(v: float | str) -> int:
 
 
 def plan_conventional(tx_mhz: float, rx_mhz: float, template: Path, channel_id: int = 1,
-                      spacing_khz: float = 6.25, bandwidth_khz: float = 12.5) -> ChannelPlan:
+                      spacing_khz: float = 6.25, bandwidth_khz: float = 12.5, max_ch: int = 4095) -> ChannelPlan:
+    """max_ch: 4095 (P25/DMR: 12-bit channel numbers) or 1023 (NXDN SiteData clamps channelNo to 1..1023)."""
     tx, rx = mhz_to_hz(tx_mhz), mhz_to_hz(rx_mhz)
     if tx <= 0 or rx <= 0:
         raise ValueError("Frequencies must be positive")
@@ -79,12 +80,13 @@ def plan_conventional(tx_mhz: float, rx_mhz: float, template: Path, channel_id: 
     # 1) Try to reuse a row from the repo's example iden table (exact grid + offset match).
     _, rows = parse_template(template)
     for row in rows:
-        if row.spacing_khz != spacing_khz or not (row.base_freq < tx <= row.base_freq + MAX_FREQ_GAP_HZ):
+        if row.spacing_khz != spacing_khz or row.bandwidth_khz != bandwidth_khz \
+                or not (row.base_freq < tx <= row.base_freq + MAX_FREQ_GAP_HZ):
             continue
         if (tx - row.base_freq) % space_hz:
             continue
         ch = (tx - row.base_freq) // space_hz
-        if not 1 <= ch <= 4095:
+        if not 1 <= ch <= max_ch:
             continue
         if simplex or row.tx_for(ch) + int(row.offset_mhz * 1e6) == rx:
             return ChannelPlan(row, ch, not simplex, simplex, tx, rx, True)
