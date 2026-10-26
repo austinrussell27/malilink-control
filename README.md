@@ -13,7 +13,7 @@ Raspberry Pi 5, without editing YAML by hand. Reach it from your phone over Tail
 
 ![dashboard](docs/screenshots/dashboard.png)
 
-## What it does (v0.3.4)
+## What it does (v0.3.5)
 
 | Area | Status |
 |---|---|
@@ -192,6 +192,19 @@ API: `GET/POST /api/radios`, `PUT/DELETE /api/radios/{rid}`, `POST /api/radios/l
 would collide with console peer 900004; give a 2nd VC an explicit peer ID on its join screen.
 
 ## Trunked P25 across several Pis
+
+**Unpairing**
+* **Voice Pi → "Unpair this Pi"** (Dashboard, Trunking, Setup welcome / Review): stops dvmhost/dvmfne, moves its
+  configs to `*.bak`, copies `state.json` to `state.json.bak`, resets to a fresh unconfigured state, and best-effort
+  tells the control Pi (`POST /api/pairing/vc-release`, cluster key) to drop the channel. Works even if the control
+  Pi is offline (then remove it there later).
+* **Control Pi → "Remove / unpair"** next to each voice channel on the **Trunking** tab (also on its Dashboard):
+  removes it from the channel list, rewrites the control Pi's configs (`voiceChNo`; dvmhost restarts if running)
+  and best-effort tells the voice Pi to release itself (`POST /api/pairing/released`, cluster key).
+* **"Unpair & reset this Pi to a fresh start"** (control Pi, Trunking/Dashboard; "Reset this Pi" for conventional):
+  same reset as above, releases every reachable voice Pi, works with them offline.
+API: `POST /api/pairing/voice-channels/{chNo}/unpair`, `POST /api/pairing/reset {notify}`. Safe in dry-run
+(services simulated, files under `var/dryrun/etc`).
 
 1. **Control Pi:** Setup → P25 → **Trunked** → finish the wizard (it always runs dvmfne). dvmhost will
    not start until at least one voice channel is paired (dvmhost refuses an empty `voiceChNo`).

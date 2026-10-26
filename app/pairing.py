@@ -185,17 +185,7 @@ def claim(c: Claim, request: Request):
 
 @router.delete("/voice-channels/{ch_no}")
 def remove_vc(ch_no: int):
-    st = state.load()
-    if not _is_control(st):
-        raise HTTPException(409, "Not a control channel")
-    vcs = st["pairing"]["voice_channels"]
-    gone = [v for v in vcs if v["channelNo"] == ch_no]
-    if not gone:
-        raise HTTPException(404, "No such voice channel")
-    st["pairing"]["voice_channels"] = [v for v in vcs if v["channelNo"] != ch_no]
-    st["nodes"] = [n for n in st["nodes"] if n.get("name") != gone[0]["name"]]
-    state.save(st)
-    return {"ok": True, **apply_control_config(st)}
+    return unpair_vc(ch_no)
 
 
 class Join(BaseModel):
@@ -274,3 +264,131 @@ def join(j: Join, request: Request):
     state.save(st)
     return {"ok": True, "written": written, "summary": summary, "warnings": g.warnings, "dry_run": settings.dry_run,
             "note": "Voice channel configured. Start dvmhost from the dashboard when you're ready to go on the air."}
+
+
+# ----------------------------------------------------------------- unpair / reset
+CONFIG_FILES = ["config.yml", "iden_table.dat", "talkgroup_rules.yml", "rid_acl.dat", "fne-config.yml",
+                "adj_site_map.yml", "peer_list.dat"]
+
+
+def _stop_services(units) -> list[dict]:
+    out = []
+    for u in units:
+        try:
+            if systemd.status(u)["active"]:
+                out.append(systemd.action(u, "stop"))
+        except Exception as e:  # pragma: no cover
+            out.append({"ok": False, "cmd": f"systemctl stop {u}", "error": str(e)})
+    return out
+
+
+def reset_local(reason: str) -> dict:
+    """Return this Pi to a fresh, unconfigured state (backups kept):
+    stop dvmhost/dvmfne, move generated configs to *.bak, copy state.json to state.json.bak, reset state."""
+    import json as _json
+    import shutil
+    stopped = _stop_services([settings.host_unit, settings.fne_unit])
+    backed = []
+    for name in CONFIG_FILES:
+        p = settings.dvm_etc / name
+        if p.exists():
+            bak = p.with_suffix(p.suffix + ".bak")
+            shutil.move(str(p), str(bak))
+            backed.append(str(bak))
+    sp = settings.data_dir / "state.json"
+    if sp.exists():
+        shutil.copyfile(sp, settings.data_dir / "state.json.bak")
+    (settings.data_dir / "config_written.json").unlink(missing_ok=True)
+    state.save(_json.loads(_json.dumps(state.DEFAULT)))
+    return {"ok": True, "reason": reason, "stopped": stopped, "backed_up": backed,
+            "state_backup": str(settings.data_dir / "state.json.bak")}
+
+
+def _remove_vc(st: dict, ch_no: int) -> Optional[dict]:
+    vcs = st["pairing"]["voice_channels"]
+    gone = next((v for v in vcs if v["channelNo"] == ch_no), None)
+    if not gone:
+        return None
+    node = next((n for n in st["nodes"] if n.get("name") == gone["name"]), None)
+    st["pairing"]["voice_channels"] = [v for v in vcs if v["channelNo"] != ch_no]
+    st["nodes"] = [n for n in st["nodes"] if n.get("name") != gone["name"]]
+    state.save(st)
+    return {"vc": gone, "node": node}
+
+
+def _tell_vc_released(node: Optional[dict]) -> dict:
+    if not node or not node.get("url"):
+        return {"ok": False, "detail": "no address for that Pi"}
+    try:
+        r = httpx.post(node["url"].rstrip("/") + "/api/pairing/released", timeout=6,
+                       headers={"X-Malilink-Cluster-Key": node.get("key", "")})
+        return {"ok": r.status_code == 200, "detail": None if r.status_code == 200 else r.text[:200]}
+    except Exception as e:
+        return {"ok": False, "detail": f"unreachable: {str(e)[:150]}"}
+
+
+@router.post("/voice-channels/{ch_no}/unpair")
+def unpair_vc(ch_no: int):
+    """Control Pi: remove a voice channel, rewrite our configs, and best-effort release the voice Pi."""
+    st = state.load()
+    if not _is_control(st):
+        raise HTTPException(409, "Not a control channel")
+    r = _remove_vc(st, ch_no)
+    if not r:
+        raise HTTPException(404, "No such voice channel")
+    applied = apply_control_config(st)
+    return {"ok": True, "removed": r["vc"]["name"], "voice_pi": _tell_vc_released(r["node"]), **applied}
+
+
+@router.post("/released")
+def released(request: Request):
+    """Voice Pi: the control Pi removed us -> reset to a fresh state (cluster key required)."""
+    st = state.load()
+    key = (st.get("pairing", {}).get("joined") or {}).get("cluster_key")
+    if st.get("role") != "voice" or not key or request.headers.get("X-Malilink-Cluster-Key") != key:
+        raise HTTPException(403, "not a paired voice channel / bad cluster key")
+    return reset_local("released by control Pi")
+
+
+@router.post("/vc-release")
+def vc_release(request: Request):
+    """Control Pi: a voice Pi tells us it is leaving (authenticated by its cluster key)."""
+    st = state.load()
+    key = request.headers.get("X-Malilink-Cluster-Key")
+    node = next((n for n in st.get("nodes", []) if key and n.get("key") == key and n.get("role") == "voice"), None)
+    if not _is_control(st) or not node:
+        raise HTTPException(403, "unknown voice channel")
+    vc = next((v for v in st["pairing"]["voice_channels"] if v["name"] == node["name"]), None)
+    if vc:
+        _remove_vc(st, vc["channelNo"])
+    else:
+        st["nodes"] = [n for n in st["nodes"] if n is not node]
+        state.save(st)
+    return {"ok": True, "removed": node["name"], **apply_control_config(state.load())}
+
+
+class ResetBody(BaseModel):
+    notify: bool = True  # best-effort tell the other Pi(s); reset happens even if they're offline
+
+
+@router.post("/reset")
+def reset_this_pi(b: ResetBody):
+    """'Unpair this Pi' (voice) / 'Unpair & reset this Pi to a fresh start' (any role)."""
+    st = state.load()
+    notified: list[dict] = []
+    if b.notify and st.get("role") == "voice":
+        j = st["pairing"].get("joined") or {}
+        url = (j.get("summary") or {}).get("control_url")
+        if url and j.get("cluster_key"):
+            try:
+                r = httpx.post(url.rstrip("/") + "/api/pairing/vc-release", timeout=6,
+                               headers={"X-Malilink-Cluster-Key": j["cluster_key"]})
+                notified.append({"node": url, "ok": r.status_code == 200,
+                                 "detail": None if r.status_code == 200 else r.text[:200]})
+            except Exception as e:
+                notified.append({"node": url, "ok": False, "detail": f"unreachable: {str(e)[:150]}"})
+    elif b.notify and st.get("role") == "control":
+        for n in st.get("nodes", []):
+            if n.get("role") == "voice":
+                notified.append({"node": n["name"], **_tell_vc_released(n)})
+    return {**reset_local("reset from this Pi"), "previous_role": st.get("role"), "notified": notified}

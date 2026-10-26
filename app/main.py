@@ -40,7 +40,7 @@ async def _perm(request: Request, exc: PermissionError):
                                    "installs its systemd unit), or start it with sudo."}, 403)
 
 
-OPEN_PATHS = ("/static/", "/favicon.ico", "/api/local/", "/api/pairing/claim", "/api/radios/sync", "/healthz")
+OPEN_PATHS = ("/static/", "/favicon.ico", "/api/local/", "/api/pairing/claim", "/api/pairing/released", "/api/pairing/vc-release", "/api/radios/sync", "/healthz")
 
 
 @app.middleware("http")
@@ -221,7 +221,8 @@ async def api_apply(request: Request):
         raise HTTPException(400, "Please confirm the licensing and DVMProject terms first.")
     st = state.load()
     if st.get("role") == "voice":
-        raise HTTPException(409, "This Pi is paired as a voice channel. Unpair it on the control Pi first.")
+        raise HTTPException(409, "This Pi is paired as a voice channel. Use the 'Unpair this Pi' button "
+                                 "(Dashboard or the Setup welcome step) to release it first.")
     vcs = st["pairing"]["voice_channels"] if w.topology == "trunked" else None
     try:
         rid = _wizard_rid(w, st)

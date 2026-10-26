@@ -14,6 +14,7 @@
 <tr><td class="muted">Config directory</td><td class="mono">{{ settings.dvm_etc }}</td></tr>
 <tr><td class="muted">Log directory</td><td class="mono">{{ settings.dvm_log_dir }}</td></tr>
 <tr><td class="muted">dvmhost installed</td><td>{{ "yes" if settings.dvmhost_installed else "no" }}</td></tr>
-<tr><td class="muted">Modes</td><td>{{ "demo data" if settings.demo else "live data" }} · {{ "dry-run" if settings.dry_run else "real system" }}{% if settings.auto_dry_run %} (auto: dvmhost/systemd not found){% endif %}</td></tr>
+<tr><td class="muted">Modes</td><td>{{ "demo data" if settings.demo else "live data" }} · {{ "dry-run" if settings.dry_run else "real system" }}{% if settings.dry_run %} ({{ settings.mode_reason }}){% endif %}</td></tr>
 </table></div>
+{% set unpair_place = "about" %}<div style="margin-top:16px">{% include "_unpair.html" %}</div>
 {% endblock %}

@@ -13,6 +13,7 @@
 
   <!-- 0 WELCOME -->
   <section class="panel" data-step="0">
+    {% set unpair_place = "setup" %}{% include "_unpair.html" %}
     <div class="hero">
       <img src="/static/malilink-logo-800.jpg" srcset="/static/malilink-logo-800.jpg 800w, /static/malilink-logo.jpg 1200w" sizes="(max-width:860px) 100vw, 520px" alt="Malinois Link Communications Network">
       <div>
@@ -182,6 +183,7 @@
   <!-- 8 REVIEW -->
   <section class="panel" data-step="9">
     <h2>Review & save</h2>
+    {% include "_unpair.html" %}
     <div id="reviewErr" class="notice" hidden></div>
     <div id="reviewWarn"></div>
     <div class="tabs" id="fileTabs"></div>

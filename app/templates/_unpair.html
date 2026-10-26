@@ -1,0 +1,31 @@
+{# Unpair / reset controls. Include with `unpair_place` set (dashboard|setup|trunking|about). #}
+{% set role = st.role %}
+{% if role == "voice" %}
+{% set j = (st.pairing.joined or {}).summary or {} %}
+<div class="card unpair-card" style="margin-bottom:16px">
+  <div class="row between">
+    <div><h2 style="margin:0 0 4px">Paired as a voice channel</h2>
+      <div class="muted small">Channel <b>{{ j.channelNo }}</b> of <b>{{ j.system_name }}</b>{% if j.control_url %} · control Pi <span class="mono">{{ j.control_url }}</span>{% endif %}</div></div>
+    <button class="btn danger" type="button" onclick="unpairThisPi('voice')">Unpair this Pi</button>
+  </div>
+  <div class="small" data-unpair-out></div>
+</div>
+{% elif role == "control" and unpair_place == "dashboard" %}
+<div class="card unpair-card" style="margin-bottom:16px">
+  <div class="row between"><h2 style="margin:0">Paired voice channels</h2>
+    <button class="btn sm danger" type="button" onclick="unpairThisPi('control')" title="Works even if the voice Pis are offline">Unpair &amp; reset this Pi to a fresh start</button></div>
+  {% if st.pairing.voice_channels %}
+  <table class="t" style="margin-top:8px"><tr><th>Pi</th><th>Channel</th><th>Address</th><th></th></tr>
+  {% for v in st.pairing.voice_channels|sort(attribute="channelNo") %}
+    <tr><td>{{ v.name }}</td><td class="mono">{{ v.channelNo }}</td><td class="mono small">{{ v.rpc_address }}</td>
+      <td style="text-align:right"><button class="btn sm danger" type="button" onclick="unpairVc({{ v.channelNo }}, {{ v.name|tojson|forceescape }})">Remove / unpair</button></td></tr>
+  {% endfor %}</table>
+  {% else %}<div class="empty" style="margin-top:8px">No voice channels paired yet — create a pairing code on the <a href="/trunking">Trunking</a> page.</div>{% endif %}
+  <div class="small" data-unpair-out></div>
+</div>
+{% elif role in ("control", "conventional") and unpair_place in ("dashboard", "about") %}
+<div class="row" style="margin-bottom:12px;justify-content:flex-end">
+  <button class="btn sm danger" type="button" onclick="unpairThisPi('{{ role }}')">Reset this Pi to a fresh start</button>
+  <span class="small" data-unpair-out></span>
+</div>
+{% endif %}

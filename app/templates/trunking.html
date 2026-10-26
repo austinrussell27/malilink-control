@@ -13,11 +13,15 @@
     <div class="big mono" id="code" style="margin-top:12px;font-size:34px;letter-spacing:.1em"></div>
     <div class="muted small" id="codeHint"></div>
   </div>
-  <div class="card"><h2>Channels in this system</h2><div id="chans"></div><pre class="small muted mono" id="rmOut"></pre></div>
+  <div class="card"><h2>Channels in this system</h2>
+    <p class="muted small">Use <b>Remove / unpair</b> to drop a voice channel: this Pi's config is rewritten and the voice Pi is told to release itself (if it's online).</p>
+    <div id="chans"></div><div class="small" data-unpair-out></div>
+    <div class="row" style="margin-top:12px;justify-content:flex-end"><button class="btn sm danger" type="button" onclick="unpairThisPi('control')" title="Works even if the voice Pis are offline">Unpair &amp; reset this control Pi to a fresh start</button></div></div>
 </div>
 {% elif role == "voice" %}
 <div class="card"><h2>This Pi is a voice channel</h2><div id="joined"></div>
-  <p class="muted small">To leave the system, remove this channel on the control Pi's Trunking page, then run Setup again here.</p></div>
+  <p class="muted small">To leave the system use <b>Unpair this Pi</b> (also on the Dashboard). The control Pi is told to drop this channel if it can be reached.</p>
+  <button class="btn danger" type="button" onclick="unpairThisPi('voice')">Unpair this Pi</button> <span class="small" data-unpair-out></span></div>
 {% else %}
 <div class="grid g2">
   <div class="card"><h2>Make this Pi a control channel</h2>
@@ -32,7 +36,7 @@
 POST   /api/pairing/claim  {code,name,url,rpc_address?,requested_tx_mhz?}  (control, called by new Pi)
        -> {channelNo, iden, iden_table, site, talkgroups, rpc{address,port,password}, network{...}, cluster_key}
 POST   /api/pairing/join   {control_url, code, name, modem_*, requested_tx_mhz?, ack_*}  (new Pi)
-GET    /api/pairing/voice-channels             DELETE /api/pairing/voice-channels/{chNo}
+GET    /api/pairing/voice-channels             POST /api/pairing/voice-channels/{chNo}/unpair  POST /api/pairing/reset
 GET    /api/local/snapshot | /api/local/logs   (X-Malilink-Cluster-Key) -> dashboard aggregation
 
 Control: protocols.p25.control.enable=true, dedicated=true; system.config.authoritative=true,
@@ -48,16 +52,11 @@ async function load() {
   if ($("#chans")) $("#chans").innerHTML = `<table class="t"><tr><th>Pi</th><th>Ch</th><th>TX / RX MHz</th><th>RPC</th><th></th></tr>${r.channels.map(c => `<tr>
       <td>${esc(c.name)} ${c.control ? '<span class="pill blue">CC</span>' : ''}</td><td>${esc(c.channelNo)}</td>
       <td class="mono small">${c.tx_mhz.toFixed(5)} / ${c.rx_mhz.toFixed(5)}</td><td class="small">${c.control ? "" : esc(c.rpc_address) + ":" + esc(c.rpc_port)}</td>
-      <td>${c.control ? "" : `<button class="btn danger" onclick="rm(${c.channelNo})">Remove</button>`}</td></tr>`).join("")}</table>
+      <td>${c.control ? "" : `<button class="btn danger sm" onclick='unpairVc(${c.channelNo}, ${JSON.stringify(c.name)})'>Remove / unpair</button>`}</td></tr>`).join("")}</table>
       ${r.voice_channels.length ? "" : '<div class="empty" style="margin-top:8px">No voice channels yet — dvmhost on the control channel needs at least one.</div>'}`;
   if ($("#joined") && r.joined) { const j = r.joined; $("#joined").innerHTML = `<table class="t">
       <tr><td class="muted">System</td><td>${esc(j.system_name)}</td></tr><tr><td class="muted">Control Pi</td><td>${esc(j.control_url)} (${esc(j.control_ip)})</td></tr>
       <tr><td class="muted">Channel</td><td>${esc(j.channelNo)}</td></tr><tr><td class="muted">TX / RX</td><td class="mono">${j.tx_mhz.toFixed(5)} / ${j.rx_mhz.toFixed(5)} MHz</td></tr></table>`; }
-}
-async function rm(ch) {
-  if (!confirm(`Remove voice channel ${ch}? The control channel will be restarted if running.`)) return;
-  try { const r = await api(`/api/pairing/voice-channels/${ch}`, {method: "DELETE"}); $("#rmOut").textContent = r.restart ? `${r.restart.cmd}: ${r.restart.ok ? "ok" : "failed"}` : "config updated"; }
-  catch (e) { $("#rmOut").textContent = e.message; } load();
 }
 if ($("#mk")) $("#mk").onclick = async () => { try { const r = await api("/api/pairing/codes", {method: "POST"});
   $("#code").textContent = r.code; $("#codeHint").textContent = `Expires at ${new Date(r.expires * 1000).toLocaleTimeString()}. Control Pi address: ${location.origin}`; }

@@ -135,3 +135,26 @@ def test_pairing_flow(pis):
     assert "800002,1,Bravo," in (ccd / "dryrun/etc/rid_acl.dat").read_text()
     assert y(ccd / "dryrun/etc/config.yml")["system"]["radio_id"]["acl"] is True
     assert "800002,1,Bravo," in (vc2d / "dryrun/etc/rid_acl.dat").read_text()
+
+    # ---- unpair: control Pi removes a voice channel and the voice Pi releases itself
+    assert "Unpair this Pi" in httpx.get(f"{vc2}/dashboard").text
+    assert "unpairVc(" in httpx.get(f"{cc}/trunking").text
+    assert httpx.post(f"{vc2}/api/pairing/released").status_code == 403          # cluster key required
+    assert httpx.post(f"{cc}/api/pairing/vc-release", headers={"X-Malilink-Cluster-Key": "nope"}).status_code == 403
+    ch2 = next(v["channelNo"] for v in httpx.get(f"{cc}/api/pairing/voice-channels").json()["voice_channels"]
+               if v["name"] == "mali-vc2b")
+    r = httpx.post(f"{cc}/api/pairing/voice-channels/{ch2}/unpair", timeout=20).json()
+    assert r["ok"] and r["removed"] == "mali-vc2b" and r["voice_pi"]["ok"]
+    assert [v["channelNo"] for v in y(ccd / "dryrun/etc/config.yml")["system"]["config"]["voiceChNo"]] == ["3"]
+    vst2 = __import__("json").loads((vc2d / "state.json").read_text())
+    assert vst2["role"] is None and not vst2["setup_complete"] and (vc2d / "state.json.bak").exists()
+    assert not (vc2d / "dryrun/etc/config.yml").exists() and (vc2d / "dryrun/etc/config.yml.bak").exists()
+
+    # ---- unpair from the voice Pi: it resets itself and the control Pi drops it
+    r = httpx.post(f"{vc}/api/wizard/apply", json={**CC, "topology": "conventional"})
+    assert r.status_code == 409 and "Unpair this Pi" in r.json()["detail"]
+    r = httpx.post(f"{vc}/api/pairing/reset", json={"notify": True}, timeout=20).json()
+    assert r["ok"] and r["previous_role"] == "voice" and r["notified"][0]["ok"]
+    assert httpx.get(f"{cc}/api/pairing/voice-channels").json()["voice_channels"] == []
+    assert all(n.get("role") != "voice" for n in __import__("json").loads((ccd / "state.json").read_text())["nodes"])
+    assert httpx.post(f"{vc}/api/wizard/apply", json={**CC, "topology": "conventional"}).json()["ok"]  # fresh again

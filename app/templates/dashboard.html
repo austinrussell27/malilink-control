@@ -3,6 +3,7 @@
 {% block content %}
 <div class="row between"><div><h1>System dashboard</h1><p class="sub" id="sub">Connecting…</p></div>
 <span class="pill gray" id="live">● live</span></div>
+{% set unpair_place = "dashboard" %}{% include "_unpair.html" %}
 {% if settings.demo %}<div class="notice small" style="margin-bottom:16px">You are looking at <b>simulated demo data</b> (a 3-Pi P25 trunked site). Start the app without <code>MALILINK_DEMO=1</code> to see your real system.</div>{% endif %}
 
 <h3>On the air now</h3>
