@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}{{ node_id }} · Malinois Link Control{% endblock %}
+{% block content %}
+<a href="/dashboard" class="muted small">← Dashboard</a>
+<div class="row between"><h1 id="nname">{{ node_id }}</h1><div class="row" id="svcBtns"></div></div>
+<div class="grid g3" style="margin:14px 0">
+  <div class="card"><h3>dvmhost service</h3><div class="big" id="hs">—</div><div class="muted small" id="hu"></div></div>
+  <div class="card"><h3>Modem / mode</h3><div class="big" id="mode">—</div><div class="muted small" id="modem"></div></div>
+  <div class="card"><h3>Channel</h3><div class="big" id="ch">—</div><div class="muted small" id="freq"></div></div>
+</div>
+<div class="card"><div class="row between"><h2>Live log</h2>
+  <div class="row"><select id="kind" style="width:auto"><option value="system">System log</option><option value="activity">Activity (calls)</option><option value="fne">Network hub (dvmfne)</option></select>
+  <label class="check" style="margin:0"><input type="checkbox" id="follow" checked> follow</label></div></div>
+  <div class="log mono" id="log"></div></div>
+<pre class="small muted mono" id="svcOut"></pre>
+{% endblock %}
+{% block scripts %}
+<script>
+const NODE = {{ node_id|tojson }};
+async function refresh() {
+  const d = await api("/api/snapshot");
+  const n = d.nodes.find(x => x.id === NODE) || d.nodes.find(x => x.name === NODE);
+  if (!n) { $("#hs").textContent = "unknown node"; return; }
+  $("#nname").textContent = n.name;
+  $("#hs").innerHTML = n.host && n.host.active ? '<span style="color:var(--green)">Running</span>' : '<span style="color:var(--red)">Stopped</span>';
+  $("#hu").textContent = "Uptime " + fmtUptime(n.host && n.host.uptime_s) + (n.fne ? ` · dvmfne ${n.fne.active ? "running" : "stopped"}` : "");
+  $("#mode").textContent = n.mode + (n.tx ? " · TX" : "");
+  $("#modem").textContent = n.modem ? `${n.modem.portType || ""} ${n.modem.modemPort || ""}` : "";
+  $("#ch").textContent = n.channelNo ? `${n.channelId ?? ""}-${n.channelNo}` : "—";
+  $("#freq").textContent = n.modem ? `TX ${fmtMHz(n.modem.txFrequency)} · RX ${fmtMHz(n.modem.rxFrequency)} · NAC ${n.nac || "—"}` : "";
+  if (NODE === "local" || d.demo) $("#svcBtns").innerHTML = d.demo ? '<span class="pill amber">demo node</span>' :
+    ["start","restart","stop"].map(v => `<button class="btn ${v==="stop"?"danger":""}" onclick="svc('dvmhost','${v}')">${v[0].toUpperCase()+v.slice(1)} dvmhost</button>`).join("");
+}
+async function svc(u, v) {
+  if (v !== "start" || confirm("Starting dvmhost puts your station on the air on the configured frequencies. Continue?")) {
+    try { const r = await api(`/api/service/${u}/${v}`, {method: "POST"}); $("#svcOut").textContent = `${r.cmd}: ${r.ok ? "ok" : "failed"}${r.dry_run ? " (dry-run)" : ""}\n${r.output||""}`; }
+    catch (e) { $("#svcOut").textContent = e.message; } refresh(); }
+}
+async function logs() {
+  const r = await api(`/api/logs/${encodeURIComponent(NODE)}?kind=${$("#kind").value}&lines=300`);
+  $("#log").innerHTML = r.lines.length ? r.lines.map(colorLog).join("") : '<span class="muted">No log lines yet.</span>';
+  if ($("#follow").checked) $("#log").scrollTop = 1e9;
+}
+$("#kind").onchange = logs;
+refresh(); logs(); setInterval(refresh, 2000); setInterval(logs, 2000);
+</script>
+{% endblock %}

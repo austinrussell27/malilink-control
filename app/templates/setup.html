@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}Setup · Malinois Link Control{% endblock %}
+{% block content %}
+<h1>Set up your radio system</h1>
+<p class="sub">A step-by-step guide. Nothing is written until the last step, and every value has a sensible default.</p>
+<div class="wiz">
+  <ol class="steps" id="steps">
+    {% for s in ["Install DVM","System type","Name & callsign","Frequencies","System IDs","Modem","Network","Talkgroups","Review & save"] %}
+    <li data-step="{{ loop.index0 }}"><span class="n">{{ loop.index }}</span><span class="l">{{ s }}</span></li>
+    {% endfor %}
+  </ol>
+  <form id="wiz" class="card" onsubmit="return false" novalidate>
+
+  <!-- 0 INSTALL -->
+  <section class="panel" data-step="0">
+    <h2>Install the DVM software</h2>
+    <p class="muted">Downloads and builds <b>dvmhost</b> and <b>dvmfne</b> from <a href="https://github.com/DVMProject/dvmhost" target="_blank" rel="noopener">github.com/DVMProject/dvmhost</a>, installs them to <code>/usr/local</code>, creates the <code>dvmhost</code> user and installs the systemd services. Safe to run again to update. On a Pi 5 the build takes roughly 15–30 minutes.</p>
+    <div class="row" style="margin:14px 0">
+      <span id="instBadge" class="pill gray">checking…</span>
+      <button class="btn primary" id="instBtn" type="button">Install / update DVM</button>
+      <label class="check" style="margin:0"><input type="checkbox" id="instFne" checked> also install the dvmfne service</label>
+    </div>
+    <ul class="progress" id="instSteps"></ul>
+    <div class="log mono" id="instLog"><span class="muted">Install output will stream here.</span></div>
+    <p class="hint">Already installed it by hand? Just press <b>Next</b>.</p>
+  </section>
+
+  <!-- 1 TYPE -->
+  <section class="panel" data-step="1">
+    <h2>What kind of system do you want?</h2>
+    <h3>Digital mode</h3>
+    <div class="choices" data-group="mode">
+      <div class="choice sel" data-val="p25"><b>P25</b><span class="muted small">Project 25 Phase 1. Works with most public-service-style radios.</span></div>
+      <div class="choice off" data-val="dmr"><span class="pill gray tag">coming next</span><b>DMR</b><span class="muted small">Color codes, two timeslots.</span></div>
+      <div class="choice off" data-val="nxdn"><span class="pill gray tag">coming next</span><b>NXDN</b><span class="muted small">Kenwood/Icom narrow digital.</span></div>
+    </div>
+    <h3 style="margin-top:20px">Layout</h3>
+    <div class="choices" data-group="topology">
+      <div class="choice sel" data-val="conventional"><b>Conventional</b><span class="muted small">One repeater or hotspot on one frequency pair. Best place to start.</span></div>
+      <div class="choice off" data-val="trunked"><span class="pill gray tag">coming next</span><b>Trunked</b><span class="muted small">One Pi is the control channel, extra Pis join as voice channels. <a href="/trunking">See the design</a>.</span></div>
+    </div>
+  </section>
+
+  <!-- 2 IDENTITY -->
+  <section class="panel" data-step="2">
+    <h2>Name & callsign</h2>
+    <div class="grid g2">
+      <div class="field"><label for="system_name">System name</label><input id="system_name" name="system_name" maxlength="32" placeholder="MALINOIS1"><div class="hint">Shown in logs and on the network. Short, no spaces works best.</div></div>
+      <div class="field"><label for="callsign">Your callsign</label><input id="callsign" name="callsign" placeholder="KD2ABC" style="text-transform:uppercase"><div class="hint">Sent as the CW ID so your station identifies itself.</div></div>
+      <div class="field"><label for="location">Location (optional)</label><input id="location" name="location" placeholder="Home, Anytown"></div>
+      <div class="field"><label for="power_w">Transmit power, watts (info only)</label><input id="power_w" name="power_w" type="number" value="10" min="0"></div>
+      <div class="field"><label for="latitude">Latitude (optional)</label><input id="latitude" name="latitude" type="number" step="any" value="0"></div>
+      <div class="field"><label for="longitude">Longitude (optional)</label><input id="longitude" name="longitude" type="number" step="any" value="0"></div>
+    </div>
+  </section>
+
+  <!-- 3 FREQS -->
+  <section class="panel" data-step="3">
+    <h2>Frequencies</h2>
+    <p class="muted">Enter what <b>this Pi's radio</b> does. A repeater transmits on its output and listens on its input. For a simplex hotspot, use the same frequency twice.</p>
+    <div class="grid g2">
+      <div class="field"><label for="tx_mhz">Transmit (output) frequency, MHz</label><input id="tx_mhz" name="tx_mhz" type="number" step="0.00001" placeholder="444.50000"><div class="hint">Your radios <b>listen</b> here.</div></div>
+      <div class="field"><label for="rx_mhz">Receive (input) frequency, MHz</label><input id="rx_mhz" name="rx_mhz" type="number" step="0.00001" placeholder="449.50000"><div class="hint">Your radios <b>talk</b> here.</div></div>
+    </div>
+    <div id="freqCalc" class="notice blue small" hidden></div>
+    <p class="hint">Make sure these frequencies are allowed by your license and coordinated where required.</p>
+  </section>
+
+  <!-- 4 IDS -->
+  <section class="panel" data-step="4">
+    <h2>System IDs</h2>
+    <p class="muted">The NAC is like a "tone" for P25 — your radios must use the same one. Defaults are fine for a single site.</p>
+    <div class="grid g2">
+      <div class="field"><label for="nac">NAC (hex)</label><input id="nac" name="nac" value="293" class="mono"><div class="hint">3 hex digits, e.g. 293. Avoid F7E/F7F (special "receive any" values).</div></div>
+      <div class="field"><label for="site_id">Site ID (hex)</label><input id="site_id" name="site_id" value="1" class="mono"></div>
+    </div>
+    <details><summary class="muted" style="cursor:pointer">Advanced (only matters for trunking / multi-site)</summary>
+      <div class="grid g3" style="margin-top:12px">
+        <div class="field"><label for="wacn">WACN / Network ID (hex)</label><input id="wacn" name="wacn" value="BB800" class="mono"></div>
+        <div class="field"><label for="sys_id">System ID (hex)</label><input id="sys_id" name="sys_id" value="001" class="mono"></div>
+        <div class="field"><label for="rfss_id">RFSS ID (hex)</label><input id="rfss_id" name="rfss_id" value="1" class="mono"></div>
+      </div>
+    </details>
+  </section>
+
+  <!-- 5 MODEM -->
+  <section class="panel" data-step="5">
+    <h2>Modem</h2>
+    <div class="grid g2">
+      <div class="field"><label for="modem_type">Modem connection</label>
+        <select id="modem_type" name="modem_type"><option value="uart">Serial / USB modem (hotspot or repeater board)</option><option value="null">No modem (null — testing only)</option></select></div>
+      <div class="field"><label for="modem_port">Serial port</label><input id="modem_port" name="modem_port" list="ports" value="/dev/ttyUSB0" class="mono"><datalist id="ports"></datalist><div class="hint" id="portHint">Looking for serial ports…</div></div>
+      <div class="field"><label for="modem_speed">Speed</label><input id="modem_speed" name="modem_speed" type="number" value="115200"><div class="hint">Leave at 115200 unless your modem firmware was changed.</div></div>
+    </div>
+    <div class="notice small">Using the Pi's GPIO serial (<code>/dev/ttyAMA0</code>)? The DVMProject README says to disable Bluetooth and the serial console first — see the README for this app.</div>
+  </section>
+
+  <!-- 6 NETWORK -->
+  <section class="panel" data-step="6">
+    <h2>Network</h2>
+    <div class="choices" data-group="network_mode">
+      <div class="choice sel" data-val="local_fne"><b>Run a network hub here</b><span class="muted small">Recommended. Runs dvmfne on this Pi so talkgroups, parrot and future voice channels work.</span></div>
+      <div class="choice" data-val="remote_fne"><b>Join an existing hub</b><span class="muted small">Connect to someone else's FNE.</span></div>
+      <div class="choice" data-val="standalone"><b>Standalone</b><span class="muted small">Just a repeater, no network.</span></div>
+    </div>
+    <div id="remoteFields" class="grid g2" style="margin-top:16px" hidden>
+      <div class="field"><label for="fne_address">Hub address</label><input id="fne_address" name="fne_address" value="127.0.0.1"></div>
+      <div class="field"><label for="fne_port">Hub port</label><input id="fne_port" name="fne_port" type="number" value="62031"></div>
+      <div class="field"><label for="fne_password">Hub password</label><input id="fne_password" name="fne_password" type="password"></div>
+      <div class="field"><label for="peer_id">Your peer ID</label><input id="peer_id" name="peer_id" type="number" value="100000"><div class="hint">The hub owner gives you this.</div></div>
+    </div>
+  </section>
+
+  <!-- 7 TALKGROUPS -->
+  <section class="panel" data-step="7">
+    <h2>Talkgroups</h2>
+    <p class="muted">Talkgroups are like channels inside your system. A "parrot" talkgroup plays your transmission back to you — great for testing.</p>
+    <table class="tgtable"><thead><tr><th style="width:110px">TG ID</th><th>Name</th><th>Description</th><th>Parrot</th><th></th></tr></thead><tbody id="tgBody"></tbody></table>
+    <button class="btn" type="button" id="tgAdd" style="margin-top:8px">+ Add talkgroup</button>
+  </section>
+
+  <!-- 8 REVIEW -->
+  <section class="panel" data-step="8">
+    <h2>Review & save</h2>
+    <div id="reviewErr" class="notice" hidden></div>
+    <div id="reviewWarn"></div>
+    <div class="tabs" id="fileTabs"></div>
+    <pre class="file mono" id="fileView">Generating…</pre>
+    <p class="hint" id="target"></p>
+    <div class="card" style="background:var(--panel2);margin-top:14px">
+      <label class="check"><input type="checkbox" id="ack_license"> I hold an appropriate license (for example an amateur radio license) for these frequencies and will identify my station as required.</label>
+      <label class="check" style="margin-top:8px"><input type="checkbox" id="ack_terms"> I accept the DVMProject terms: personal, non-commercial, hobbyist use only, and <b>never</b> for public-safety or life-safety communications. (This sets <code>iAgreeNotToBeStupid: true</code>.)</label>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn primary" type="button" id="saveBtn">Save configuration</button>
+      <span id="saveMsg" class="muted small"></span>
+    </div>
+    <div id="afterSave" class="card" style="margin-top:14px" hidden>
+      <h2>Saved! Start your system</h2>
+      <p class="muted small">Starting dvmhost puts your repeater/hotspot on the air with your configured frequencies.</p>
+      <div class="row">
+        <button class="btn" type="button" data-svc="dvmfne" data-verb="start" id="fneStart">Start network hub (dvmfne)</button>
+        <button class="btn primary" type="button" data-svc="dvmhost" data-verb="start">Start dvmhost</button>
+        <a class="btn" href="/program">Program your radio →</a>
+        <a class="btn" href="/dashboard">Dashboard →</a>
+      </div>
+      <pre class="small muted mono" id="svcOut"></pre>
+    </div>
+  </section>
+
+  <div class="navbtns">
+    <button class="btn" type="button" id="back">← Back</button>
+    <button class="btn primary" type="button" id="next">Next →</button>
+  </div>
+  </form>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/wizard.js?v={{ version }}"></script>{% endblock %}

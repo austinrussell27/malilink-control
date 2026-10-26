@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Program your radio · Malinois Link Control{% endblock %}
+{% block content %}
+<h1>Program your radio</h1>
+<p class="sub">Enter these values in your radio's programming software (CPS) as a new P25 conventional channel / personality.</p>
+{% if not radio %}
+  <div class="notice">{{ err or "Finish the setup wizard first — then your radio values will appear here." }} <a href="/setup">Go to setup →</a></div>
+{% else %}
+<div class="grid g3">
+  <div class="card radio-card"><h3>Receive frequency</h3><div class="val">{{ "%.5f"|format(radio.radio_rx_mhz) }}</div><div class="muted">MHz — what your radio listens to</div></div>
+  <div class="card radio-card"><h3>Transmit frequency</h3><div class="val">{{ "%.5f"|format(radio.radio_tx_mhz) }}</div><div class="muted">MHz — what your radio talks on{% if radio.offset_mhz %} (offset {{ "%+.4f"|format(radio.offset_mhz) }} MHz){% else %} (simplex){% endif %}</div></div>
+  <div class="card radio-card"><h3>NAC</h3><div class="val mono">{{ radio.nac_hex }}</div><div class="muted">hex (= {{ radio.nac_dec }} decimal). Set both Rx and Tx NAC.</div></div>
+</div>
+<div class="grid g2" style="margin-top:16px">
+  <div class="card"><h2>Channel settings</h2>
+    <table class="t">
+      <tr><td class="muted">Mode</td><td>Digital — {{ radio.mode }}</td></tr>
+      <tr><td class="muted">Bandwidth</td><td>12.5 kHz (narrow)</td></tr>
+      <tr><td class="muted">Squelch / "Tx & Rx NAC"</td><td class="mono">{{ radio.nac_hex }}</td></tr>
+      <tr><td class="muted">Encryption</td><td>Off</td></tr>
+      <tr><td class="muted">Unit ID (radio ID)</td><td>Your own unique number (e.g. a DMR/CCS7 ID). Every radio needs a different one.</td></tr>
+      <tr><td class="muted">Channel name</td><td>{{ radio.system_name }}</td></tr>
+    </table>
+  </div>
+  <div class="card"><h2>Talkgroups</h2>
+    <p class="muted small">Add each as a talkgroup and pick one as the channel's transmit talkgroup.</p>
+    <table class="t"><tr><th>TG ID</th><th>Name</th><th></th></tr>
+    {% for t in radio.talkgroups %}<tr><td class="mono big" style="font-size:18px">{{ t.tgid }}</td><td>{{ t.name }} <span class="muted small">{{ t.alias }}</span></td><td>{% if t.parrot %}<span class="pill blue">parrot – test here</span>{% endif %}</td></tr>{% endfor %}
+    </table>
+  </div>
+</div>
+<p class="hint">Field names differ between radio brands. "Rx/Tx frequency" here is from the radio's point of view (the repeater's output is your receive).</p>
+{% endif %}
+{% endblock %}

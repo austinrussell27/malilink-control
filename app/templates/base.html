@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<title>{% block title %}Malinois Link Control{% endblock %}</title>
+<link rel="stylesheet" href="/static/app.css?v={{ version }}">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%23f5a524'/></svg>">
+</head>
+<body data-page="{{ page }}">
+<header class="topbar">
+  <a class="brand" href="/">
+    <span class="logo" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M6 26 L10 6 L16 14 L22 6 L26 26" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/><circle cx="16" cy="22" r="2.5" fill="currentColor"/></svg></span>
+    <span class="brand-text"><b>Malinois Link Control</b><small>Malinois Link Communication Network</small></span>
+  </a>
+  <nav class="nav" id="nav">
+    <a href="/dashboard" class="{{ 'on' if page=='dashboard' }}">Dashboard</a>
+    <a href="/setup" class="{{ 'on' if page=='setup' }}">Setup</a>
+    <a href="/program" class="{{ 'on' if page=='program' }}">Program radio</a>
+    <a href="/logs" class="{{ 'on' if page=='logs' }}">Logs</a>
+    <a href="/trunking" class="{{ 'on' if page=='trunking' }}">Trunking</a>
+    <a href="/about" class="{{ 'on' if page=='about' }}">About</a>
+  </nav>
+  <div class="badges">
+    {% if settings.demo %}<span class="pill amber" title="Dashboard shows simulated data">DEMO DATA</span>{% endif %}
+    {% if settings.dry_run %}<span class="pill blue" title="Nothing on this machine is changed; configs go to {{ settings.dvm_etc }}">DRY-RUN</span>{% endif %}
+  </div>
+  <button class="menu-btn" onclick="document.body.classList.toggle('menu-open')" aria-label="Menu">☰</button>
+</header>
+<main class="wrap">
+{% block content %}{% endblock %}
+</main>
+<footer class="legal">
+  <strong>Transmitting requires an appropriate license</strong> (e.g. an amateur radio license for amateur frequencies) — you are responsible for every frequency you use.
+  DVMProject software is for <strong>personal, non-commercial, hobbyist use only</strong> and must <strong>never</strong> be used for public-safety or life-safety communications.
+  This app never keys your transmitter by itself. <a href="/about">More</a>
+</footer>
+<script src="/static/app.js?v={{ version }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

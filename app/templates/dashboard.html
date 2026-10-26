@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · Malinois Link Control{% endblock %}
+{% block content %}
+<div class="row between"><div><h1>System dashboard</h1><p class="sub" id="sub">Connecting…</p></div>
+<span class="pill gray" id="live">● live</span></div>
+{% if settings.demo %}<div class="notice small" style="margin-bottom:16px">You are looking at <b>simulated demo data</b> (a 3-Pi P25 trunked site). Start the app without <code>MALILINK_DEMO=1</code> to see your real system.</div>{% endif %}
+
+<h3>On the air now</h3>
+<div id="talking" style="margin-bottom:22px"><div class="empty">Quiet — nobody is talking.</div></div>
+
+<h3>Pis</h3>
+<div class="grid nodes" id="nodes" style="margin-bottom:22px"></div>
+
+<div class="grid g2">
+  <div class="card"><h2>Channel grants</h2><div id="grants"></div></div>
+  <div class="card"><h2>Affiliations <span class="muted small">(radio → talkgroup)</span></h2><div id="affs" style="max-height:300px;overflow:auto"></div></div>
+</div>
+<div class="card" style="margin-top:16px"><h2>Recent activity</h2><div id="recent" style="max-height:420px;overflow:auto"></div></div>
+{% endblock %}
+{% block scripts %}<script src="/static/dashboard.js?v={{ version }}"></script>{% endblock %}

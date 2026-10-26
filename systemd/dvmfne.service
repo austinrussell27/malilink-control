@@ -1,0 +1,14 @@
+# NOT shipped by the dvmhost repo - written by Malinois Link Control, modeled on the
+# repo's linux/dvmhost.service (fne-config.example.yml has `daemon: true` -> forking).
+[Unit]
+Description=DVMProject FNE (Fixed Network Equipment) Service
+After=syslog.target network.target
+
+[Service]
+User=dvmhost
+Type=forking
+ExecStart=/usr/local/bin/dvmfne -c /usr/local/etc/fne-config.yml
+Restart=on-abnormal
+
+[Install]
+WantedBy=multi-user.target

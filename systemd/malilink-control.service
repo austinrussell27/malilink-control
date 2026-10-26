@@ -1,0 +1,20 @@
+[Unit]
+Description=Malinois Link Control (DVMProject setup & dashboard)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+# Runs as root because it installs packages, writes /usr/local/etc and calls systemctl.
+# Keep it off the public internet: bind to your Tailscale IP (or 0.0.0.0 behind Tailscale ACLs)
+# and set MALILINK_PASSWORD.
+User=root
+WorkingDirectory=/opt/malilink-control
+EnvironmentFile=-/etc/default/malilink-control
+ExecStart=/opt/malilink-control/.venv/bin/uvicorn app.main:app --host ${MALILINK_BIND} --port ${MALILINK_PORT}
+Environment=MALILINK_BIND=0.0.0.0
+Environment=MALILINK_PORT=8080
+Environment=MALILINK_DATA_DIR=/var/lib/malilink-control
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

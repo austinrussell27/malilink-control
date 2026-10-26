@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Trunking · Malinois Link Control{% endblock %}
+{% block content %}
+<h1>Trunking & voice channels <span class="pill gray">coming next</span></h1>
+<p class="sub">Design preview. One Pi runs the <b>control channel</b> (and the network hub); every extra Pi joins as a <b>voice channel</b> with a short pairing code over Tailscale.</p>
+<div class="grid g2">
+  <div class="card"><h2>On the control-channel Pi</h2>
+    <ol class="muted small"><li>Click <b>Create pairing code</b>.</li><li>Code is valid for 10 minutes, single use.</li><li>The control Pi assigns the next channel number, adds the Pi to its voice-channel list and to this dashboard.</li></ol>
+    <button class="btn primary" id="mk">Create pairing code</button>
+    <div class="big mono" id="code" style="margin-top:12px;font-size:34px;letter-spacing:.1em"></div>
+    <div id="vcs" style="margin-top:12px"></div>
+  </div>
+  <div class="card"><h2>On a new Pi: "Add a voice channel"</h2>
+    <div class="field"><label>Control Pi address</label><input id="cu" placeholder="http://mali-cc:8080"><div class="hint">Its Tailscale name or 100.x.y.z address.</div></div>
+    <div class="field"><label>Pairing code</label><input id="pc" class="mono" placeholder="K7Q-4MD" style="text-transform:uppercase"></div>
+    <button class="btn" id="join">Join as voice channel</button>
+    <pre class="small mono muted" id="jout" style="white-space:pre-wrap"></pre>
+  </div>
+</div>
+<div class="card" style="margin-top:16px"><h2>Pairing API</h2>
+<pre class="file mono">POST /api/pairing/codes            (control)  -> {code, expires}
+POST /api/pairing/claim  {code,name,url,rpc_address,rpc_port}  (control, called by the new Pi)
+                                            -> {channelId, channelNo, site{...}, controlCh{...}, network{...}, cluster_key, todo[]}
+POST /api/pairing/join   {control_url, code}  (new Pi)  -> calls /claim, stores the bundle, role=voice
+GET  /api/pairing/voice-channels    (control)  -> paired voice channels
+GET  /api/local/snapshot | /api/local/logs   (every Pi; header X-Malilink-Cluster-Key) -> dashboard aggregation
+
+Still TODO (see app/pairing.py): write voiceChNo on the control Pi + restart, write the VC config.yml
+on the new Pi, enable the P25 control channel on the CC.</pre></div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function vcs() { const r = await api("/api/pairing/voice-channels");
+  $("#vcs").innerHTML = r.voice_channels.length ? `<table class="t"><tr><th>Pi</th><th>Channel</th><th>RPC</th></tr>${r.voice_channels.map(v => `<tr><td>${esc(v.name)}</td><td>${esc(v.channelNo)}</td><td>${esc(v.rpc_address)}:${esc(v.rpc_port)}</td></tr>`).join("")}</table>` : '<div class="empty">No voice channels paired yet.</div>'; }
+$("#mk").onclick = async () => { try { const r = await api("/api/pairing/codes", {method: "POST"}); $("#code").textContent = r.code; } catch (e) { $("#code").innerHTML = `<span class="err" style="font-size:14px">${esc(e.message)}</span>`; } };
+$("#join").onclick = async () => { try { const r = await api("/api/pairing/join", {method: "POST", body: {control_url: $("#cu").value, code: $("#pc").value}}); $("#jout").textContent = JSON.stringify(r, null, 2); } catch (e) { $("#jout").textContent = e.message; } };
+vcs();
+</script>
+{% endblock %}

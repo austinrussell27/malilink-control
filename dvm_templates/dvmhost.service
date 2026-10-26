@@ -1,0 +1,12 @@
+[Unit]
+Description=DVMProject Host Radio Service
+After=syslog.target network.target
+
+[Service]
+User=dvmhost
+Type=forking
+ExecStart=/usr/local/bin/dvmhost -c /usr/local/etc/config.yml
+Restart=on-abnormal
+
+[Install]
+WantedBy=multi-user.target

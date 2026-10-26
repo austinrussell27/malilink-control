@@ -1,0 +1,1 @@
+Copied from https://github.com/DVMProject/dvmhost @ 435ff45b367887ffa94c89cb1a2779628e0f7bfb (2026-04-01). Refresh with scripts/refresh_templates.sh

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}About · Malinois Link Control{% endblock %}
+{% block content %}
+<h1>About & safety</h1>
+<div class="card notice" style="margin-bottom:16px">
+<p><b>Licensing.</b> Transmitting requires an appropriate license for the frequencies you use — for example an amateur radio license on amateur bands, or a license for your own business/GMRS-style allocation where digital modes are permitted. You are responsible for station identification, coordination and staying within your license.</p>
+<p><b>DVMProject terms.</b> dvmhost/dvmfne are provided for <b>personal, non-commercial, hobbyist use</b>. They must <b>never</b> be used in public-safety or life-safety critical applications. See the project's <a href="https://github.com/DVMProject/dvmhost/blob/master/usage_guidelines.md" target="_blank" rel="noopener">usage guidelines</a>.</p>
+<p style="margin-bottom:0"><b>This app never keys your transmitter by itself.</b> It only writes configuration, starts/stops services when you click, and reads status. It does not call any dvmhost API that transmits (paging, grants, raw TSBK, mode changes).</p>
+</div>
+<div class="card"><table class="t">
+<tr><td class="muted">Version</td><td>{{ version }}</td></tr>
+<tr><td class="muted">This Pi</td><td>{{ settings.node_name }}</td></tr>
+<tr><td class="muted">Config directory</td><td class="mono">{{ settings.dvm_etc }}</td></tr>
+<tr><td class="muted">Log directory</td><td class="mono">{{ settings.dvm_log_dir }}</td></tr>
+<tr><td class="muted">dvmhost installed</td><td>{{ "yes" if settings.dvmhost_installed else "no" }}</td></tr>
+<tr><td class="muted">Modes</td><td>{{ "demo data" if settings.demo else "live data" }} · {{ "dry-run" if settings.dry_run else "real system" }}{% if settings.auto_dry_run %} (auto: dvmhost/systemd not found){% endif %}</td></tr>
+</table></div>
+{% endblock %}

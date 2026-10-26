@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Logs · Malinois Link Control{% endblock %}
+{% block content %}
+<h1>Live logs</h1><p class="sub">Tails the dvmhost / dvmfne log files on each Pi.</p>
+<div class="card"><div class="row" style="margin-bottom:10px">
+  <select id="node" style="width:auto"></select>
+  <select id="kind" style="width:auto"><option value="system">System log</option><option value="activity">Activity (calls)</option><option value="fne">Network hub (dvmfne)</option></select>
+  <input id="filter" placeholder="Filter (e.g. 3101001 or TG 1)" style="max-width:260px">
+  <label class="check" style="margin:0"><input type="checkbox" id="follow" checked> follow</label></div>
+  <div class="log mono" id="log" style="height:60vh"></div></div>
+{% endblock %}
+{% block scripts %}
+<script>
+api("/api/snapshot").then(d => { $("#node").innerHTML = d.nodes.map(n => `<option value="${esc(n.id)}">${esc(n.name)}</option>`).join(""); load(); });
+async function load() {
+  if (!$("#node").value) return;
+  const r = await api(`/api/logs/${encodeURIComponent($("#node").value)}?kind=${$("#kind").value}&lines=500`);
+  const f = $("#filter").value.toLowerCase();
+  const lines = f ? r.lines.filter(l => l.toLowerCase().includes(f)) : r.lines;
+  $("#log").innerHTML = lines.length ? lines.map(colorLog).join("") : '<span class="muted">No log lines.</span>';
+  if ($("#follow").checked) $("#log").scrollTop = 1e9;
+}
+$("#node").onchange = $("#kind").onchange = $("#filter").oninput = load; setInterval(load, 2000);
+</script>
+{% endblock %}
